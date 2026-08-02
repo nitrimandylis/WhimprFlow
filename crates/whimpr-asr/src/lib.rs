@@ -2,6 +2,7 @@
 //! [`whimpr_core::AsrEngine`]. Expects 16 kHz mono f32 samples.
 
 use std::path::Path;
+use std::sync::RwLock;
 
 use whimpr_core::asr::{AsrCaps, AsrEngine, AsrEngineId, Transcript};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
@@ -9,6 +10,10 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 /// A loaded whisper model ready to transcribe utterances.
 pub struct WhisperEngine {
     ctx: WhisperContext,
+    /// Whisper language code, or "auto" to let the model detect it. Held behind a
+    /// lock so it can be changed from the Hub without reloading the model, which
+    /// takes about a second.
+    language: RwLock<String>,
 }
 
 impl WhisperEngine {
@@ -19,7 +24,18 @@ impl WhisperEngine {
             .ok_or_else(|| anyhow::anyhow!("model path is not valid UTF-8"))?;
         let ctx = WhisperContext::new_with_params(path, WhisperContextParameters::default())
             .map_err(|e| anyhow::anyhow!("failed to load whisper model: {e}"))?;
-        Ok(Self { ctx })
+        Ok(Self {
+            ctx,
+            language: RwLock::new("en".to_string()),
+        })
+    }
+
+    /// Set the spoken language. Only has an effect with a multilingual model —
+    /// the `.en` builds ignore it and always transcribe English.
+    pub fn set_language(&self, language: &str) {
+        if let Ok(mut g) = self.language.write() {
+            *g = language.to_string();
+        }
     }
 }
 
@@ -40,8 +56,20 @@ impl AsrEngine for WhisperEngine {
             .create_state()
             .map_err(|e| anyhow::anyhow!("whisper create_state: {e}"))?;
 
+        // Bound before `params` so the borrow passed to set_language outlives it.
+        let language = self
+            .language
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_else(|_| "en".to_string());
+
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-        params.set_language(Some("en"));
+        // `None` puts whisper into auto-detect.
+        if language == "auto" {
+            params.set_language(None);
+        } else {
+            params.set_language(Some(&language));
+        }
         params.set_translate(false);
         params.set_print_special(false);
         params.set_print_progress(false);

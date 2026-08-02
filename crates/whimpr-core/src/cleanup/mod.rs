@@ -43,6 +43,15 @@ pub struct CleanupContext {
     pub app_bundle_id: Option<String>,
     /// ~200 chars around the caret, or None. Treated as reference, never instructions.
     pub window_context: Option<String>,
+    /// Free-text style instructions from the user, appended to the system prompt
+    /// so cleaned text keeps sounding like them.
+    #[serde(default)]
+    pub style: Option<String>,
+    /// When set this request is a Transform, not a cleanup: the instruction
+    /// replaces the cleanup prompt entirely and the few-shot cleanup examples are
+    /// dropped, since they would pull the model back towards mere tidying.
+    #[serde(default)]
+    pub transform_prompt: Option<String>,
 }
 
 impl Default for CleanupContext {
@@ -52,6 +61,8 @@ impl Default for CleanupContext {
             vocab: Vec::new(),
             app_bundle_id: None,
             window_context: None,
+            style: None,
+            transform_prompt: None,
         }
     }
 }
@@ -106,10 +117,26 @@ pub fn wrap_transcript(raw: &str) -> String {
 /// *told* to), then the real transcript with its vocab/context. Every provider —
 /// local worker, OpenAI, Anthropic — sends this identical sequence.
 pub fn build_messages(raw: &str, ctx: &CleanupContext) -> Vec<CleanupMsg> {
+    // A Transform is a different job: reshape, not tidy. The cleanup few-shots
+    // demonstrate minimal edits, so including them here actively fights the
+    // instruction.
+    if let Some(instruction) = ctx.transform_prompt.as_deref() {
+        return vec![
+            CleanupMsg {
+                role: "system",
+                content: prompts::system_for_transform(instruction, ctx.style.as_deref()),
+            },
+            CleanupMsg {
+                role: "user",
+                content: wrap_transcript(raw),
+            },
+        ];
+    }
+
     let mut msgs = Vec::with_capacity(prompts::FEW_SHOT.len() * 2 + 2);
     msgs.push(CleanupMsg {
         role: "system",
-        content: prompts::system_for(ctx.level, ctx.app_bundle_id.as_deref()),
+        content: prompts::system_for(ctx.level, ctx.app_bundle_id.as_deref(), ctx.style.as_deref()),
     });
     for (input, output) in prompts::FEW_SHOT {
         msgs.push(CleanupMsg { role: "user", content: wrap_transcript(input) });

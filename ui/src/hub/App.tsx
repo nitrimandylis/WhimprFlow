@@ -7,6 +7,10 @@ import { Home } from "./Home";
 import { Insights } from "./Insights";
 import { DictionaryPane } from "./DictionaryPane";
 import { SettingsPane } from "./SettingsPane";
+import { SnippetsPane } from "./SnippetsPane";
+import { ScratchpadPane } from "./ScratchpadPane";
+import { TransformsPane } from "./TransformsPane";
+import { StylePane } from "./StylePane";
 import { Help } from "./Help";
 import { ComingSoon } from "./ComingSoon";
 import type { IconName } from "./icons";
@@ -19,29 +23,8 @@ import {
   DEFAULT_SETTINGS,
 } from "./api";
 
-// Placeholder screens that are routed but not yet built.
-const SOON: Partial<Record<Page, { icon: IconName; title: string; desc: string }>> = {
-  snippets: {
-    icon: "snippets",
-    title: "Snippets",
-    desc: "Save reusable phrases and expand them by voice — signatures, addresses, boilerplate.",
-  },
-  style: {
-    icon: "style",
-    title: "Style",
-    desc: "Tune WhimprFlow's tone and formatting so cleaned-up text always sounds like you.",
-  },
-  transforms: {
-    icon: "transforms",
-    title: "Transforms",
-    desc: "Turn a quick spoken thought into an email, a summary, or a to-do with one command.",
-  },
-  scratchpad: {
-    icon: "scratchpad",
-    title: "Scratchpad",
-    desc: "A quiet place to dictate long-form and shape it before it lands anywhere else.",
-  },
-};
+// Every screen is built now; kept so a future stub has somewhere to live.
+const SOON: Partial<Record<Page, { icon: IconName; title: string; desc: string }>> = {};
 
 export function App() {
   const [page, setPage] = useState<Page>("home");
@@ -90,6 +73,10 @@ export function App() {
           {page === "home" && <Home />}
           {page === "insights" && <Insights />}
           {page === "dictionary" && <DictionaryPane />}
+          {page === "snippets" && <SnippetsPane />}
+          {page === "scratchpad" && <ScratchpadPane />}
+          {page === "transforms" && <TransformsPane />}
+          {page === "style" && <StylePane settings={settings} onChange={update} />}
           {page === "settings" && (
             <SettingsPane settings={settings} onChange={update} status={status} refresh={refresh} />
           )}

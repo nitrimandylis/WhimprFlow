@@ -11,6 +11,9 @@ ui/node_modules/
 src-tauri/target/
 src-tauri/gen/
 
+# Sidecar binaries staged by the build script (compiled artefacts, not source).
+src-tauri/binaries/
+
 # Models (downloaded separately — multi-GB, not committed)
 *.gguf
 *.bin

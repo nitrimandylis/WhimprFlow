@@ -23,6 +23,39 @@ async function tauriListen<T>(event: string, cb: (payload: T) => void): Promise<
   }
 }
 
+// ── Dragging ─────────────────────────────────────────────────────────────────
+// The overlay is a borderless, unfocusable window, so it can only be moved by
+// asking the OS to start a native drag. We can't observe mouseup afterwards
+// (the OS owns the mouse during the drag), so the final resting position is
+// read back on a short delay and persisted to settings.
+async function beginDrag() {
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const win = getCurrentWindow();
+    await win.startDragging();
+
+    // Poll briefly until the position stops changing, then save it once.
+    let last = "";
+    let stable = 0;
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      const p = await win.outerPosition();
+      const key = `${p.x},${p.y}`;
+      if (key === last) {
+        if (++stable >= 2) break;
+      } else {
+        stable = 0;
+        last = key;
+      }
+    }
+    const p = await win.outerPosition();
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("set_pill_position", { x: p.x, y: p.y });
+  } catch {
+    /* browser preview — no window to drag */
+  }
+}
+
 // A row of dot-like rounded bars driven by mic RMS — Wispr's dotted-waveform look:
 // small dots when quiet, rising into a waveform when speaking.
 function DottedWaveform({ bars }: { bars: number[] }) {
@@ -72,11 +105,138 @@ function DottedWaveform({ bars }: { bars: number[] }) {
   return <canvas ref={canvasRef} style={{ width: "100%", height: 28 }} />;
 }
 
+async function pillCommand(cmd: "pill_cancel" | "pill_stop" | "pill_start") {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke(cmd);
+  } catch {
+    /* browser preview */
+  }
+}
+
+/// Stop propagation so a press on a button never reaches the pill's drag handler.
+function buttonHandlers(onActivate: () => void) {
+  return {
+    onMouseDown: (e: React.MouseEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+    },
+    onClick: (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onActivate();
+    },
+  };
+}
+
+// ── Hover action cluster ─────────────────────────────────────────────────────
+const LANG_CYCLE = ["en", "hi", "gu", "auto"] as const;
+const LANG_NAMES: Record<string, string> = {
+  en: "EN",
+  hi: "हिं",
+  gu: "ગુ",
+  auto: "Auto",
+};
+function langLabel(code: string) {
+  return LANG_NAMES[code] ?? code.toUpperCase();
+}
+
+const KEY_LABELS: Record<string, string> = {
+  fn: "fn",
+  right_command: "⌘",
+  right_option: "⌥",
+  right_control: "⌃",
+};
+
+function GlobeIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18" />
+    </svg>
+  );
+}
+
+function MicIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+      <rect x="9" y="2.5" width="6" height="11" rx="3" />
+      <path
+        d="M5.5 11a6.5 6.5 0 0 0 13 0"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+      />
+      <path d="M11.1 18h1.8v3.2h-1.8z" />
+    </svg>
+  );
+}
+
+function NoteIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M5 3.5h14v12l-4.5 4.5H5z" strokeLinejoin="round" />
+      <path d="M19 15.5h-4.5V20" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function RoundButton({
+  children,
+  onActivate,
+  onEnter,
+  title,
+  primary = false,
+  active = false,
+}: {
+  children: React.ReactNode;
+  onActivate: () => void;
+  onEnter: () => void;
+  title: string;
+  primary?: boolean;
+  active?: boolean;
+}) {
+  const size = primary ? 46 : 40;
+  return (
+    <div
+      title={title}
+      onMouseEnter={onEnter}
+      // Swallow mousedown so the pill's press-and-hold drag never starts here.
+      onMouseDown={(e) => {
+        e.stopPropagation();
+        e.preventDefault();
+      }}
+      onClick={(e) => {
+        e.stopPropagation();
+        onActivate();
+      }}
+      style={{
+        width: size,
+        height: size,
+        borderRadius: 9999,
+        background: active ? palette.accent500 : pillFill.base,
+        border: `1px solid rgba(255,255,255,${active ? 0.25 : 0.1})`,
+        boxShadow: pillFill.shadow,
+        color: active ? "#08201E" : palette.pillText,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        flex: "0 0 auto",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 function CancelButton() {
   return (
     <div
       title="Cancel (Esc)"
+      {...buttonHandlers(() => void pillCommand("pill_cancel"))}
       style={{
+        cursor: "pointer",
         flex: "0 0 auto",
         width: 26,
         height: 26,
@@ -98,8 +258,10 @@ function CancelButton() {
 function StopButton() {
   return (
     <div
-      title="Stop"
+      title="Stop and insert"
+      {...buttonHandlers(() => void pillCommand("pill_stop"))}
       style={{
+        cursor: "pointer",
         flex: "0 0 auto",
         width: 26,
         height: 26,
@@ -118,6 +280,64 @@ function StopButton() {
 export function FlowBar() {
   const [state, setState] = useState<BarState>("idle");
   const [bars, setBars] = useState<number[]>([]);
+  // Pending click-vs-drag decision; see the pill's onMouseDown.
+  const dragTimer = useRef<number | null>(null);
+  const [hover, setHover] = useState(false);
+  // Which button the pointer is over, so the tooltip can name that action.
+  const [tip, setTip] = useState<{ label: string; hint?: string } | null>(null);
+  const [language, setLanguage] = useState("en");
+  const [keyLabel, setKeyLabel] = useState("fn");
+  const [scratch, setScratch] = useState(false);
+  const [follows, setFollows] = useState(true);
+
+  // Read the bits of settings the cluster displays. Re-read on hover so a change
+  // made in the Hub shows up here without a restart.
+  useEffect(() => {
+    if (!hover) return;
+    void (async () => {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const s = await invoke<{
+          language: string;
+          push_to_talk_key: string;
+          pill_follows_active_display: boolean;
+        }>("get_settings");
+        setLanguage(s.language);
+        setKeyLabel(KEY_LABELS[s.push_to_talk_key] ?? "fn");
+        setFollows(s.pill_follows_active_display);
+        setScratch(await invoke<boolean>("get_scratchpad_capture"));
+      } catch {
+        /* browser preview */
+      }
+    })();
+  }, [hover]);
+
+  async function cycleLanguage() {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const s = await invoke<Record<string, unknown>>("get_settings");
+      const cur = String(s.language ?? "en");
+      const i = LANG_CYCLE.indexOf(cur as (typeof LANG_CYCLE)[number]);
+      const next = LANG_CYCLE[(i + 1) % LANG_CYCLE.length];
+      await invoke("set_settings", { settings: { ...s, language: next } });
+      setLanguage(next);
+      setTip({ label: "Language", hint: langLabel(next) });
+    } catch {
+      /* browser preview */
+    }
+  }
+
+  async function toggleScratch() {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const next = !scratch;
+      await invoke("set_scratchpad_capture", { on: next });
+      setScratch(next);
+      setTip({ label: "Scratchpad", hint: next ? "On" : "Off" });
+    } catch {
+      /* browser preview */
+    }
+  }
 
   useEffect(() => {
     let un1: (() => void) | undefined;
@@ -142,27 +362,67 @@ export function FlowBar() {
           ? "Discarded"
           : "Done";
 
-  // Pill dimensions per state.
+  // Pill dimensions per state. The idle nub is deliberately tiny so it doesn't
+  // nag, but that also made it undiscoverable — so hovering expands it into a
+  // labelled affordance that says what a click will do.
   const dims = isIdle
-    ? { w: 76, h: 16 }
+    ? hover
+      ? { w: 158, h: 38 }
+      : { w: 76, h: 16 }
     : recording
       ? { w: 250, h: 44 }
       : { w: 180, h: 36 };
 
+  const showActions = isIdle && hover;
+
   return (
+    // Bottom-aligned so the resting nub keeps its position and the hover UI grows
+    // upwards, rather than the whole cluster jumping when it expands.
     <div
       style={{
         position: "fixed",
         inset: 0,
         display: "flex",
+        flexDirection: "column",
         alignItems: "center",
-        justifyContent: "center",
+        justifyContent: "flex-end",
+        paddingBottom: 4,
         fontFamily: font.ui,
         userSelect: "none",
+      }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => {
+        setHover(false);
+        setTip(null);
       }}
     >
       <div
         aria-label={`WhimprFlow ${state}`}
+        title={isIdle ? "Click to dictate · hold to move" : "Hold to move"}
+        // A quick click and a drag both begin with mousedown, and the native
+        // drag takes over the mouse the moment it starts — so the two are told
+        // apart by time: release within 180ms is a click, keep holding and it
+        // becomes a drag.
+        onMouseDown={(e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          if (dragTimer.current !== null) window.clearTimeout(dragTimer.current);
+          dragTimer.current = window.setTimeout(() => {
+            dragTimer.current = null;
+            // Dragging is pointless while the pill is following the cursor —
+            // the watcher would pull it straight back. Turn "Follow the active
+            // display" off in Settings first.
+            if (!follows) void beginDrag();
+          }, 180);
+        }}
+        onMouseUp={() => {
+          if (dragTimer.current === null) return; // the drag already started
+          window.clearTimeout(dragTimer.current);
+          dragTimer.current = null;
+          // Clicking the idle nub starts a hands-free dictation; clicking it
+          // mid-dictation finishes and inserts.
+          void pillCommand(isIdle ? "pill_start" : "pill_stop");
+        }}
         style={{
           display: "flex",
           alignItems: "center",
@@ -179,9 +439,28 @@ export function FlowBar() {
           transition: `width ${geometry.morphMs}ms ${motionEase}, height ${geometry.morphMs}ms ${motionEase}`,
           overflow: "hidden",
           fontSize: 13,
+          cursor: "pointer",
         }}
       >
-        {isIdle ? null : recording ? (
+        {isIdle ? (
+          // The capsule itself carries the label on hover — it is not replaced.
+          showActions ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 9,
+                padding: "0 15px",
+                whiteSpace: "nowrap",
+                fontSize: 14,
+                fontWeight: 500,
+              }}
+            >
+              <span>{tip?.label ?? "Dictate"}</span>
+              <b style={{ fontWeight: 700 }}>{tip?.hint ?? keyLabel}</b>
+            </div>
+          ) : null
+        ) : recording ? (
           <>
             <CancelButton />
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -195,6 +474,35 @@ export function FlowBar() {
           <span style={{ color: palette.pillTextMuted }}>{statusText}</span>
         )}
       </div>
+
+      {/* Added below the capsule on hover — the capsule stays put. */}
+      {showActions && (
+        <div style={{ display: "flex", alignItems: "center", gap: 11, marginTop: 9 }}>
+          <RoundButton
+            title="Language"
+            onEnter={() => setTip({ label: "Language", hint: langLabel(language) })}
+            onActivate={() => void cycleLanguage()}
+          >
+            <GlobeIcon />
+          </RoundButton>
+          <RoundButton
+            primary
+            title="Dictate"
+            onEnter={() => setTip(null)}
+            onActivate={() => void pillCommand("pill_start")}
+          >
+            <MicIcon />
+          </RoundButton>
+          <RoundButton
+            title="Scratchpad"
+            active={scratch}
+            onEnter={() => setTip({ label: "Scratchpad", hint: scratch ? "On" : "Off" })}
+            onActivate={() => void toggleScratch()}
+          >
+            <NoteIcon />
+          </RoundButton>
+        </div>
+      )}
     </div>
   );
 }

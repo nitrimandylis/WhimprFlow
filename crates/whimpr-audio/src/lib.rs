@@ -74,12 +74,39 @@ pub fn start<F>(on_bars: F) -> anyhow::Result<CaptureHandle>
 where
     F: Fn(&[f32]) + Send + 'static,
 {
+    start_on_device(None, on_bars)
+}
+
+/// Names of the available input devices, for the microphone picker.
+pub fn input_device_names() -> Vec<String> {
+    let host = cpal::default_host();
+    match host.input_devices() {
+        Ok(devices) => devices.filter_map(|d| d.name().ok()).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// As [`start`], but capturing from a named input device. `None` — or a name that
+/// is no longer present, e.g. a headset that has since been unplugged — falls
+/// back to the system default rather than failing to record at all.
+pub fn start_on_device<F>(device_name: Option<String>, on_bars: F) -> anyhow::Result<CaptureHandle>
+where
+    F: Fn(&[f32]) + Send + 'static,
+{
     let (stop_tx, stop_rx) = channel::<()>();
     let (ready_tx, ready_rx) = channel::<anyhow::Result<()>>();
 
     let join = std::thread::spawn(move || -> Option<CaptureResult> {
         let host = cpal::default_host();
-        let device = match host.default_input_device() {
+        let chosen = device_name.and_then(|want| {
+            if want.trim().is_empty() {
+                return None;
+            }
+            host.input_devices().ok().and_then(|mut ds| {
+                ds.find(|d| d.name().map(|n| n == want).unwrap_or(false))
+            })
+        });
+        let device = match chosen.or_else(|| host.default_input_device()) {
             Some(d) => d,
             None => {
                 let _ = ready_tx.send(Err(anyhow::anyhow!("no default input device")));
