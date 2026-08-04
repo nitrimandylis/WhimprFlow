@@ -74,6 +74,22 @@ fn whisper_model_path() -> std::path::PathBuf {
     dir.join("ggml-base.en.bin")
 }
 
+fn log_path() -> std::path::PathBuf {
+    support_dir().join("debug.log")
+}
+
+/// Release builds run detached with no console — `eprintln!` alone reaches no one.
+/// Mirror every diagnostic into `%APPDATA%\WhimprFlow\debug.log` so a user can just
+/// open a text file after reproducing a bug instead of needing a terminal.
+fn log(msg: impl std::fmt::Display) {
+    let line = format!("[{}] {msg}", unix_now());
+    eprintln!("{line}");
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log_path()) {
+        use std::io::Write;
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -266,7 +282,7 @@ fn on_ptt_down() {
             *CAPTURE.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(handle);
         }
         Err(e) => {
-            eprintln!("[whimpr:win] mic capture failed: {e}");
+            log(format!("mic capture failed: {e}"));
             RECORDING.store(false, Ordering::SeqCst);
             flash_bar("error", 900);
         }
@@ -282,15 +298,15 @@ fn on_ptt_up() {
     let handle = CAPTURE.get().and_then(|slot| slot.lock().unwrap().take());
     std::thread::spawn(move || {
         let Some(res) = handle.and_then(|h| h.stop()) else {
-            eprintln!("[whimpr:win] no audio captured");
+            log("no audio captured");
             flash_bar("error", 900);
             return;
         };
         let Some(asr) = ASR.get().and_then(|m| m.lock().unwrap().clone()) else {
-            eprintln!(
-                "[whimpr:win] ASR not ready — for Local mode, is a Whisper model (e.g. \
-                 ggml-base.en.bin) present in %APPDATA%\\WhimprFlow\\models\\? For Cloud mode, \
-                 is the OpenAI-slot API key saved in Settings?"
+            log(
+                "ASR not ready — for Local mode, is a Whisper model (e.g. ggml-base.en.bin) \
+                 present in %APPDATA%\\WhimprFlow\\models\\? For Cloud mode, is the OpenAI-slot \
+                 API key saved in Settings?",
             );
             flash_bar("error", 900);
             return;
@@ -298,15 +314,15 @@ fn on_ptt_up() {
         let pcm = whimpr_audio::resample_to_16k(&res.samples, res.sample_rate);
         match asr.transcribe(&pcm) {
             Ok(t) => {
-                eprintln!("[whimpr:win] TRANSCRIPT: \"{}\"", t.text);
+                log(format!("TRANSCRIPT: \"{}\"", t.text));
                 let text = clean_transcript(&t.text);
                 if text.is_empty() {
-                    eprintln!("[whimpr:win] transcript was empty — nothing to paste");
+                    log("transcript was empty — nothing to paste");
                     flash_bar("error", 900);
                     return;
                 }
                 if let Err(e) = paste_text(&text) {
-                    eprintln!("[whimpr:win] paste failed: {e}");
+                    log(format!("paste failed: {e}"));
                     flash_bar("error", 900);
                     return;
                 }
@@ -314,7 +330,7 @@ fn on_ptt_up() {
                 flash_bar("done", 500);
             }
             Err(e) => {
-                eprintln!("[whimpr:win] ASR error: {e}");
+                log(format!("ASR error: {e}"));
                 flash_bar("error", 900);
             }
         }
@@ -345,7 +361,7 @@ fn spawn_hook_thread() {
         let hinst = GetModuleHandleW(None).unwrap_or_default();
         let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), hinst, 0);
         if hook.is_err() {
-            eprintln!("[whimpr:win] failed to install keyboard hook");
+            log("failed to install keyboard hook");
             return;
         }
         let mut msg = MSG::default();
@@ -356,6 +372,9 @@ fn spawn_hook_thread() {
 // ── Public surface (mirrors the macOS `hotkey::` functions the commands call) ────
 
 pub fn install(app: AppHandle) {
+    // Fresh log per run — only the latest session's diagnostics matter here.
+    let _ = std::fs::create_dir_all(support_dir());
+    let _ = std::fs::write(log_path(), b"");
     let _ = APP.set(app);
     let _ = CLOCK.set(Instant::now());
     let _ = SETTINGS.set(Mutex::new(whimpr_core::Settings::load(&settings_path())));
@@ -367,7 +386,7 @@ pub fn install(app: AppHandle) {
     rebuild_providers();
 
     spawn_hook_thread();
-    eprintln!("[whimpr:win] keyboard hook installed (push-to-talk: Right Ctrl)");
+    log("keyboard hook installed (push-to-talk: Right Ctrl)");
 }
 
 pub fn current_settings() -> whimpr_core::Settings {
@@ -410,13 +429,17 @@ fn rebuild_asr(settings: &whimpr_core::Settings) {
                 .and_then(|e| e.get_password().ok())
                 .filter(|k| !k.trim().is_empty());
             let Some(key) = key else {
-                eprintln!(
-                    "[whimpr:win] ASR: cloud mode selected but no OpenAI-slot API key is saved \
-                     (cloud ASR reuses the OpenAI API key field in Settings)"
+                log(
+                    "ASR: cloud mode selected but no OpenAI-slot API key is saved (cloud ASR \
+                     reuses the OpenAI API key field in Settings)",
                 );
                 return;
             };
             let model = settings.asr_model.clone();
+            log(format!(
+                "ASR: cloud mode, model={model}, base_url={:?}",
+                settings.asr_base_url
+            ));
             let engine: Arc<dyn AsrEngine> = Arc::new(whimpr_cleanup::CloudAsr::with_base_url(
                 key,
                 model,
@@ -425,7 +448,7 @@ fn rebuild_asr(settings: &whimpr_core::Settings) {
             if let Some(slot) = ASR.get() {
                 *slot.lock().unwrap() = Some(engine);
             }
-            eprintln!("[whimpr:win] ASR ready (cloud)");
+            log("ASR ready (cloud)");
         }
         whimpr_core::AsrMode::Local => {
             std::thread::spawn(|| match whimpr_asr::WhisperEngine::load(&whisper_model_path()) {
@@ -434,9 +457,9 @@ fn rebuild_asr(settings: &whimpr_core::Settings) {
                     if let Some(slot) = ASR.get() {
                         *slot.lock().unwrap() = Some(engine);
                     }
-                    eprintln!("[whimpr:win] ASR ready (local)");
+                    log("ASR ready (local)");
                 }
-                Err(e) => eprintln!("[whimpr:win] ASR load failed: {e}"),
+                Err(e) => log(format!("ASR load failed: {e}")),
             });
         }
     }
