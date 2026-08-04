@@ -11,9 +11,9 @@ A **local-first, cross-platform voice dictation app** — hold a key, speak, and
 | Platform | Status |
 |----------|--------|
 | **macOS 14+** | **Built and working** — developed and tested locally (Apple Silicon). |
-| **Windows 10/11** | **Built and working** — compiles and runs on real Windows 11 (MSVC). Push-to-talk (hold **Right Ctrl**), Whisper ASR, clipboard+`SendInput` paste, and cloud cleanup (OpenAI or any OpenAI-compatible API, e.g. OpenRouter) are verified end-to-end. Auto-learn dictionary capture is still macOS-only; the local (on-device) LLM cleanup worker builds but is CPU-only for now (no CUDA/Vulkan yet). |
+| **Windows 10/11** | **Built and working** — compiles and runs on real Windows 11 (MSVC), including a packaged NSIS installer (`tauri build`). Push-to-talk (hold **Right Ctrl**), Whisper ASR, clipboard+`SendInput` paste, and cloud cleanup (OpenAI or any OpenAI-compatible API, e.g. OpenRouter) are verified end-to-end. Auto-learn dictionary capture is still macOS-only; the local (on-device) LLM cleanup worker builds but is CPU-only for now (no CUDA/Vulkan yet), and only runs at all when Cleanup Engine is set to **Local** — cloud modes never load it. |
 
-Both platforms are build-from-source only for now — there's no signed installer/release pipeline yet, so `git clone` + the steps below is the way to run it on either OS.
+Both platforms build from source — there's no signed/notarized release pipeline yet (the Windows installer and macOS `.app` are unsigned), so `git clone` + the steps below is the way to run it on either OS.
 
 ---
 
@@ -64,11 +64,19 @@ Requires Rust (stable, MSVC toolchain), [CMake](https://cmake.org/download/), LL
 (for `bindgen` — set `LIBCLANG_PATH` to its `bin/` dir if it isn't auto-detected), the
 **Visual Studio Build Tools** (Desktop development with C++ workload), and Node + pnpm.
 
+> ⚠️ **Pin LLVM to the 17.x–18.x range.** `whisper-rs-sys`'s pinned `bindgen` (0.69)
+> doesn't handle the struct layout `libclang` emits on LLVM 19+ — it silently generates
+> opaque zero-field structs instead of erroring, so the build fails deep inside
+> `whisper-rs` with `no field ... on type whisper_full_params` (`available field: _address`).
+> If you hit that, uninstall LLVM and reinstall a 17.x/18.x release
+> (`winget install --id LLVM.LLVM --version 17.0.6`), then `cargo clean -p whisper-rs-sys`
+> to drop the stale bindings before rebuilding.
+
 ```powershell
 cd ui; pnpm install; cd ..
 # Dev (starts the Vite UI server + the app with hot reload):
 ui\node_modules\.bin\tauri.CMD dev
-# Or a release build:
+# Or a release build (installer lands in target\release\bundle\nsis\):
 ui\node_modules\.bin\tauri.CMD build
 ```
 

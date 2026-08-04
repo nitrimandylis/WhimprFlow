@@ -322,14 +322,6 @@ pub fn install(app: AppHandle) {
         }
         Err(e) => eprintln!("[whimpr:win] ASR load failed: {e}"),
     });
-    // Start the local cleanup worker.
-    std::thread::spawn(|| {
-        if let Some(w) = crate::local_llm::spawn_default() {
-            if let Some(slot) = LOCAL.get() {
-                *slot.lock().unwrap() = Some(w);
-            }
-        }
-    });
 
     spawn_hook_thread();
     eprintln!("[whimpr:win] keyboard hook installed (push-to-talk: Right Ctrl)");
@@ -359,6 +351,28 @@ pub fn rebuild_providers() {
         *slot.lock().unwrap() = key.map(|k| {
             whimpr_cleanup::OpenAiProvider::with_base_url(k, model, Some(base_url))
         });
+    }
+    sync_local_worker(settings.cleanup_mode);
+}
+
+/// Start (or stop) the local llama.cpp cleanup worker to match the current
+/// cleanup mode — it's only worth the RAM/CPU when `Local` is actually selected.
+/// Spawning happens off-thread since the worker process takes a few seconds to
+/// load its model; stopping just drops the child (see `LocalWorker`'s `Drop`).
+fn sync_local_worker(mode: CleanupMode) {
+    let Some(slot) = LOCAL.get() else { return };
+    if matches!(mode, CleanupMode::Local) {
+        if slot.lock().unwrap().is_none() {
+            std::thread::spawn(|| {
+                if let Some(w) = crate::local_llm::spawn_default() {
+                    if let Some(slot) = LOCAL.get() {
+                        *slot.lock().unwrap() = Some(w);
+                    }
+                }
+            });
+        }
+    } else {
+        *slot.lock().unwrap() = None;
     }
 }
 

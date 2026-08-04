@@ -4,9 +4,9 @@
   "version": "0.1.1",
   "identifier": "com.whimpr.whimprflow",
   "build": {
-    "beforeDevCommand": "pnpm --dir ui dev",
+    "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm --dir ui build",
+    "beforeBuildCommand": "pnpm build",
     "frontendDist": "../ui/dist"
   },
   "app": {
@@ -19,7 +19,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": "all",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

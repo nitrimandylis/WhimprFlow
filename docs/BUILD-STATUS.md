@@ -1,6 +1,6 @@
 # WhimprFlow — Build Status
 
-_Updated 2026-07-17. Tracks what's implemented vs. planned. Plan: `~/.claude/plans/make-a-new-project-abundant-stroustrup.md`; specs: `SPEC.md`, `ARCHITECTURE-DUAL-PLATFORM.md`._
+_Updated 2026-08-03. Tracks what's implemented vs. planned. Plan: `~/.claude/plans/make-a-new-project-abundant-stroustrup.md`; specs: `SPEC.md`, `ARCHITECTURE-DUAL-PLATFORM.md`._
 
 ## Done and verified
 
@@ -45,10 +45,13 @@ frontmost app (clipboard saved/restored). Each stage validated independently.
   push-to-talk (Right Ctrl), clipboard+`SendInput` paste, foreground-process detection, Whisper ASR
   (CPU), and the tray/overlay/Hub shell all verified running end-to-end. Also added: an
   OpenAI-compatible `base_url` on the cloud cleanup provider so Windows users without an
-  OpenAI/Anthropic key can point it at OpenRouter or similar. Remaining: GPU backend for Whisper/
-  llama.cpp (CPU-only today), UIA-based insertion beyond clipboard paste, secure-input/elevated-window
-  guards, a configurable hotkey (hardcoded to Right Ctrl), auto-learn (still macOS-only), and
-  NSIS/signing for a real installer.
+  OpenAI/Anthropic key can point it at OpenRouter or similar, and a packaged NSIS installer
+  (`tauri build` → `target\release\bundle\nsis\`). The local llama.cpp cleanup worker now only
+  spawns when Cleanup Engine is actually set to **Local** — it used to load unconditionally at
+  startup regardless of mode, which was wasted RAM/CPU on cloud-only setups. Remaining: GPU
+  backend for Whisper/llama.cpp (CPU-only today), UIA-based insertion beyond clipboard paste,
+  secure-input/elevated-window guards, a configurable hotkey (hardcoded to Right Ctrl), auto-learn
+  (still macOS-only), and signing for the installer.
 - **Dictionary auto-learn** (AX diff), history persistence + Hub history list, command mode.
 
 ## How to run what exists
