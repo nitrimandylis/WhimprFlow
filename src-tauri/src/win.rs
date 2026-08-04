@@ -42,7 +42,7 @@ static APP: OnceLock<AppHandle> = OnceLock::new();
 static CLOCK: OnceLock<Instant> = OnceLock::new();
 static RECORDING: AtomicBool = AtomicBool::new(false);
 static CAPTURE: OnceLock<Mutex<Option<whimpr_audio::CaptureHandle>>> = OnceLock::new();
-static ASR: OnceLock<Arc<whimpr_asr::WhisperEngine>> = OnceLock::new();
+static ASR: OnceLock<Mutex<Option<Arc<dyn AsrEngine>>>> = OnceLock::new();
 static LOCAL: OnceLock<Mutex<Option<crate::local_llm::LocalWorker>>> = OnceLock::new();
 static OPENAI: OnceLock<Mutex<Option<whimpr_cleanup::OpenAiProvider>>> = OnceLock::new();
 static SETTINGS: OnceLock<Mutex<whimpr_core::Settings>> = OnceLock::new();
@@ -92,6 +92,21 @@ fn emit_bar(state: &'static str) {
             state: &'static str,
         }
         let _ = app.emit_to(OVERLAY_LABEL, "whimpr://flowbar/state", P { state });
+    }
+}
+
+#[derive(Clone, serde::Serialize)]
+struct WavePayload {
+    bars: Vec<f32>,
+}
+
+fn emit_waveform(bars: &[f32]) {
+    if let Some(app) = APP.get() {
+        let _ = app.emit_to(
+            OVERLAY_LABEL,
+            "whimpr://audio/waveform",
+            WavePayload { bars: bars.to_vec() },
+        );
     }
 }
 
@@ -229,17 +244,32 @@ fn record_dictation(text: &str, duration_secs: f32, app: Option<String>) {
 
 // ── The push-to-talk pipeline ───────────────────────────────────────────────────
 
+/// Flash the pill to `state`, then settle back to idle after `after_ms` — the
+/// release build has no console (windows_subsystem = "windows" hides it), so this
+/// pill flash is the ONLY failure feedback the user can actually see.
+fn flash_bar(state: &'static str, after_ms: u64) {
+    emit_bar(state);
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(after_ms));
+        emit_bar("idle");
+    });
+}
+
 fn on_ptt_down() {
     if RECORDING.swap(true, Ordering::SeqCst) {
         return; // already recording
     }
     let _ = now_ms();
     emit_bar("recording");
-    std::thread::spawn(|| match whimpr_audio::start(|_: &[f32]| {}) {
+    std::thread::spawn(|| match whimpr_audio::start(emit_waveform) {
         Ok(handle) => {
             *CAPTURE.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(handle);
         }
-        Err(e) => eprintln!("[whimpr:win] mic capture failed: {e}"),
+        Err(e) => {
+            eprintln!("[whimpr:win] mic capture failed: {e}");
+            RECORDING.store(false, Ordering::SeqCst);
+            flash_bar("error", 900);
+        }
     });
 }
 
@@ -247,24 +277,45 @@ fn on_ptt_up() {
     if !RECORDING.swap(false, Ordering::SeqCst) {
         return; // wasn't recording
     }
-    emit_bar("idle");
+    emit_bar("transcribing");
     let app = foreground_app();
     let handle = CAPTURE.get().and_then(|slot| slot.lock().unwrap().take());
     std::thread::spawn(move || {
         let Some(res) = handle.and_then(|h| h.stop()) else {
+            eprintln!("[whimpr:win] no audio captured");
+            flash_bar("error", 900);
             return;
         };
-        let Some(asr) = ASR.get().cloned() else {
+        let Some(asr) = ASR.get().and_then(|m| m.lock().unwrap().clone()) else {
+            eprintln!(
+                "[whimpr:win] ASR not ready — for Local mode, is a Whisper model (e.g. \
+                 ggml-base.en.bin) present in %APPDATA%\\WhimprFlow\\models\\? For Cloud mode, \
+                 is the OpenAI-slot API key saved in Settings?"
+            );
+            flash_bar("error", 900);
             return;
         };
         let pcm = whimpr_audio::resample_to_16k(&res.samples, res.sample_rate);
-        if let Ok(t) = asr.transcribe(&pcm) {
-            let text = clean_transcript(&t.text);
-            if !text.is_empty() {
+        match asr.transcribe(&pcm) {
+            Ok(t) => {
+                eprintln!("[whimpr:win] TRANSCRIPT: \"{}\"", t.text);
+                let text = clean_transcript(&t.text);
+                if text.is_empty() {
+                    eprintln!("[whimpr:win] transcript was empty — nothing to paste");
+                    flash_bar("error", 900);
+                    return;
+                }
                 if let Err(e) = paste_text(&text) {
                     eprintln!("[whimpr:win] paste failed: {e}");
+                    flash_bar("error", 900);
+                    return;
                 }
                 record_dictation(&text, res.duration_secs(), app);
+                flash_bar("done", 500);
+            }
+            Err(e) => {
+                eprintln!("[whimpr:win] ASR error: {e}");
+                flash_bar("error", 900);
             }
         }
     });
@@ -312,16 +363,8 @@ pub fn install(app: AppHandle) {
     let _ = STATS.set(Mutex::new(whimpr_core::StatsStore::load(&stats_path())));
     let _ = OPENAI.set(Mutex::new(None));
     let _ = LOCAL.set(Mutex::new(None));
+    let _ = ASR.set(Mutex::new(None));
     rebuild_providers();
-
-    // Load Whisper.
-    std::thread::spawn(|| match whimpr_asr::WhisperEngine::load(&whisper_model_path()) {
-        Ok(engine) => {
-            let _ = ASR.set(Arc::new(engine));
-            eprintln!("[whimpr:win] ASR ready");
-        }
-        Err(e) => eprintln!("[whimpr:win] ASR load failed: {e}"),
-    });
 
     spawn_hook_thread();
     eprintln!("[whimpr:win] keyboard hook installed (push-to-talk: Right Ctrl)");
@@ -341,8 +384,8 @@ pub fn update_settings(new: whimpr_core::Settings) {
 
 pub fn rebuild_providers() {
     let settings = current_settings_inner();
-    let model = settings.openai_model;
-    let base_url = settings.openai_base_url;
+    let model = settings.openai_model.clone();
+    let base_url = settings.openai_base_url.clone();
     let key = keyring::Entry::new("com.whimpr.whimprflow", "openai_api_key")
         .ok()
         .and_then(|e| e.get_password().ok())
@@ -353,6 +396,50 @@ pub fn rebuild_providers() {
         });
     }
     sync_local_worker(settings.cleanup_mode);
+    rebuild_asr(&settings);
+}
+
+/// (Re)build the speech-to-text engine to match the current ASR mode. Cloud is
+/// built synchronously (just an HTTP client, no load time); local Whisper loads
+/// off-thread since parsing the GGUF model takes ~1s.
+fn rebuild_asr(settings: &whimpr_core::Settings) {
+    match settings.asr_mode {
+        whimpr_core::AsrMode::Cloud => {
+            let key = keyring::Entry::new("com.whimpr.whimprflow", "openai_api_key")
+                .ok()
+                .and_then(|e| e.get_password().ok())
+                .filter(|k| !k.trim().is_empty());
+            let Some(key) = key else {
+                eprintln!(
+                    "[whimpr:win] ASR: cloud mode selected but no OpenAI-slot API key is saved \
+                     (cloud ASR reuses the OpenAI API key field in Settings)"
+                );
+                return;
+            };
+            let model = settings.asr_model.clone();
+            let engine: Arc<dyn AsrEngine> = Arc::new(whimpr_cleanup::CloudAsr::with_base_url(
+                key,
+                model,
+                Some(settings.asr_base_url.clone()),
+            ));
+            if let Some(slot) = ASR.get() {
+                *slot.lock().unwrap() = Some(engine);
+            }
+            eprintln!("[whimpr:win] ASR ready (cloud)");
+        }
+        whimpr_core::AsrMode::Local => {
+            std::thread::spawn(|| match whimpr_asr::WhisperEngine::load(&whisper_model_path()) {
+                Ok(engine) => {
+                    let engine: Arc<dyn AsrEngine> = Arc::new(engine);
+                    if let Some(slot) = ASR.get() {
+                        *slot.lock().unwrap() = Some(engine);
+                    }
+                    eprintln!("[whimpr:win] ASR ready (local)");
+                }
+                Err(e) => eprintln!("[whimpr:win] ASR load failed: {e}"),
+            });
+        }
+    }
 }
 
 /// Start (or stop) the local llama.cpp cleanup worker to match the current
