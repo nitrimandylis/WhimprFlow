@@ -13,6 +13,8 @@ export type BarState =
 
 type StateEvent = { state: BarState };
 type WaveformEvent = { bars: number[] };
+// Mirrors `diag::ErrorDto` in src-tauri/src/diag.rs.
+type ErrorEvent = { headline: string; detail: string };
 
 async function tauriListen<T>(event: string, cb: (payload: T) => void): Promise<() => void> {
   try {
@@ -118,36 +120,49 @@ function StopButton() {
 export function FlowBar() {
   const [state, setState] = useState<BarState>("idle");
   const [bars, setBars] = useState<number[]>([]);
+  // Set by `whimpr://error`, shown while state === "error". Falls back to a
+  // generic line if the error-state event somehow arrives without one (e.g.
+  // an older build, or a future ShowBar(Error) call that doesn't go through
+  // `diag::report`).
+  const [errorText, setErrorText] = useState<ErrorEvent | null>(null);
 
   useEffect(() => {
     let un1: (() => void) | undefined;
     let un2: (() => void) | undefined;
+    let un3: (() => void) | undefined;
     tauriListen<StateEvent>("whimpr://flowbar/state", (p) => setState(p.state)).then((u) => (un1 = u));
     tauriListen<WaveformEvent>("whimpr://audio/waveform", (p) => setBars(p.bars)).then((u) => (un2 = u));
+    tauriListen<ErrorEvent>("whimpr://error", (p) => setErrorText(p)).then((u) => (un3 = u));
     return () => {
       un1?.();
       un2?.();
+      un3?.();
     };
   }, []);
 
   const recording = state === "recording" || state === "locked";
   const isIdle = state === "idle";
   const processing = state === "transcribing";
+  const isError = state === "error";
   const statusText =
     state === "transcribing"
       ? "Cleaning up…"
-      : state === "error"
-        ? "Something's off"
+      : isError
+        ? errorText?.headline ?? "Something's off"
         : state === "cancelled"
           ? "Discarded"
           : "Done";
 
-  // Pill dimensions per state.
+  // Pill dimensions per state. Error gets extra width so the specific
+  // headline (e.g. "Accessibility permission needed") isn't clipped —
+  // truncating it back down to "Something's off" would defeat the point.
   const dims = isIdle
     ? { w: 76, h: 16 }
     : recording
       ? { w: 250, h: 44 }
-      : { w: 180, h: 36 };
+      : isError
+        ? { w: 280, h: 36 }
+        : { w: 180, h: 36 };
 
   return (
     <div
@@ -162,7 +177,8 @@ export function FlowBar() {
       }}
     >
       <div
-        aria-label={`WhimprFlow ${state}`}
+        aria-label={`WhimprFlow ${state}${isError && errorText ? `: ${errorText.detail}` : ""}`}
+        title={isError ? errorText?.detail : undefined}
         style={{
           display: "flex",
           alignItems: "center",
