@@ -8,6 +8,7 @@
 
 mod appctx;
 mod autolearn;
+mod diag;
 mod hotkey;
 mod local_llm;
 mod paste;
@@ -155,6 +156,15 @@ fn get_status() -> StatusReport {
     }
 }
 
+/// The most recent loud diagnostic (permission/injection failure), if any —
+/// lets the Hub show what went wrong even if it was opened after the fact.
+/// See `diag::report`, called from the dictation pipeline whenever text
+/// fails to reach the cursor.
+#[tauri::command]
+fn get_last_error() -> Option<diag::ErrorDto> {
+    diag::last_error()
+}
+
 fn has_key(account: &str) -> bool {
     keyring::Entry::new("com.whimpr.whimprflow", account)
         .ok()
@@ -239,6 +249,7 @@ pub fn run() {
             add_dictionary_entry,
             remove_dictionary_entry,
             get_status,
+            get_last_error,
             request_microphone,
             request_accessibility,
             request_input_monitoring,
