@@ -125,7 +125,9 @@ const SOON: Partial<Record<Page, { icon: IconName; title: string; desc: string }
 export function App() {
   const [page, setPage] = useState<Page>("home");
   const [settings, setLocalSettings] = useState<Settings>(DEFAULT_SETTINGS);
-  const [entered, setEntered] = useState(false);
+  const [entered, setEntered] = useState(() => {
+    try { return localStorage.getItem("whimpr_onboarding_done") === "1"; } catch { return false; }
+  });
   const [status, setStatus] = useState<Status>({
     accessibility: false,
     microphone: false,
@@ -136,7 +138,18 @@ export function App() {
   const [lastError, setLastError] = useState<LastError | null>(null);
   const [errorDismissed, setErrorDismissed] = useState(false);
 
-  const refresh = () => getStatus().then(setStatus);
+  const markEntered = () => {
+    try { localStorage.setItem("whimpr_onboarding_done", "1"); } catch { /* ignore */ }
+    setEntered(true);
+  };
+
+  const refresh = () =>
+    getStatus().then((s) => {
+      setStatus(s);
+      // Auto-enter if both required permissions are already granted so the user
+      // never sees the Onboarding gate on a re-open after a successful setup.
+      if (s.accessibility && s.microphone) markEntered();
+    });
 
   useEffect(() => {
     getSettings().then(setLocalSettings);
@@ -177,7 +190,7 @@ export function App() {
 
   // Gate the app behind the setup wizard until the required permissions are granted.
   if (!(status.accessibility && status.microphone) && !entered) {
-    return <Onboarding status={status} refresh={refresh} onEnter={() => setEntered(true)} />;
+    return <Onboarding status={status} refresh={refresh} onEnter={markEntered} />;
   }
 
   const soon = SOON[page];
