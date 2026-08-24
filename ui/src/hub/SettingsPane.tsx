@@ -256,7 +256,7 @@ export function SettingsPane({
       </Card>
 
       <Card>
-        <SectionTitle sub="Grant these to WhimprFlow, then quit and reopen the app if a dot stays grey.">
+        <SectionTitle sub="Grant these to WhimprFlow — dots update automatically within a few seconds.">
           Permissions
         </SectionTitle>
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
