@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { font, palette } from "../tokens/values";
 import { theme } from "./theme";
 import { Onboarding } from "./Onboarding";
@@ -15,11 +15,13 @@ import {
   setSettings,
   getStatus,
   getLastError,
+  onPermissions,
   requestAccessibility,
   type Settings,
   type Status,
   type LastError,
   DEFAULT_SETTINGS,
+  UNKNOWN_STATUS,
 } from "./api";
 
 // A slim, dismissible warning strip shown above the Hub content whenever
@@ -128,13 +130,7 @@ export function App() {
   const [entered, setEntered] = useState(() => {
     try { return localStorage.getItem("whimpr_onboarding_done") === "1"; } catch { return false; }
   });
-  const [status, setStatus] = useState<Status>({
-    accessibility: false,
-    microphone: false,
-    input_monitoring: false,
-    has_openai_key: false,
-    has_anthropic_key: false,
-  });
+  const [status, setStatus] = useState<Status>(UNKNOWN_STATUS);
   const [lastError, setLastError] = useState<LastError | null>(null);
   const [errorDismissed, setErrorDismissed] = useState(false);
 
@@ -143,13 +139,21 @@ export function App() {
     setEntered(true);
   };
 
-  const refresh = () =>
-    getStatus().then((s) => {
-      setStatus(s);
-      // Auto-enter if both required permissions are already granted so the user
-      // never sees the Onboarding gate on a re-open after a successful setup.
-      if (s.accessibility && s.microphone) markEntered();
-    });
+  // Stable across renders. It used to be rebuilt on every render, which tore
+  // down and restarted any interval keyed on it — a poll that resets its own
+  // clock on every tick is a poll that can be starved.
+  const refresh = useCallback(
+    () =>
+      getStatus().then((s) => {
+        setStatus(s);
+        // Auto-enter if both required permissions are already granted so the user
+        // never sees the Onboarding gate on a re-open after a successful setup.
+        if (s.accessibility && s.microphone) markEntered();
+      }),
+    [],
+  );
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
 
   useEffect(() => {
     getSettings().then(setLocalSettings);
@@ -157,13 +161,49 @@ export function App() {
     getLastError().then(setLastError);
   }, []);
 
-  // Keep polling permission status for the whole session, not just during
-  // onboarding — a permission can lapse after `entered` is already true (a
-  // rebuild with a new ad-hoc signature invalidates a prior macOS
-  // Accessibility grant; see the "stale TCC entry" case in hotkey.rs), and
-  // that used to go completely unnoticed until the user dug through logs.
+  // The permission heartbeat lives in Rust now (`permissions::watch`) and is
+  // pushed here the instant macOS changes its mind. That matters because the
+  // reader grants the microphone from *System Settings*, with this window
+  // behind it or closed to the tray — and a webview that isn't rendering runs
+  // no timers at all. (Measured on 0.1.1: hide the Hub and its status calls
+  // stop 4.4s later and never resume, while a Rust thread keeps ticking every
+  // half second.) Waiting on our own setInterval was half of why "it didn't
+  // recognize that I had given it microphone permissions" happened.
   useEffect(() => {
-    const id = setInterval(refresh, 5000);
+    let stop: (() => void) | undefined;
+    let gone = false;
+    void onPermissions((p) => {
+      setStatus((prev) => {
+        const next = { ...prev, ...p };
+        if (next.accessibility && next.microphone) markEntered();
+        return next;
+      });
+    }).then((u) => (gone ? u() : (stop = u)));
+    return () => {
+      gone = true;
+      stop?.();
+    };
+  }, []);
+
+  // Coming back to the window is the other moment the reader expects the truth:
+  // they just flipped a switch in System Settings and tabbed back here.
+  useEffect(() => {
+    const sync = () => void refreshRef.current();
+    window.addEventListener("focus", sync);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      window.removeEventListener("focus", sync);
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, []);
+
+  // Backstop poll for the whole session, not just during onboarding — a
+  // permission can lapse after `entered` is already true (a rebuild with a new
+  // ad-hoc signature invalidates a prior macOS Accessibility grant; see the
+  // "stale TCC entry" case in hotkey.rs), and that used to go completely
+  // unnoticed until the user dug through logs.
+  useEffect(() => {
+    const id = setInterval(() => void refreshRef.current(), 5000);
     return () => clearInterval(id);
   }, []);
 
