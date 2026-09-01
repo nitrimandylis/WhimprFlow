@@ -1,7 +1,8 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { font, palette } from "../tokens/values";
 import { theme } from "./theme";
 import {
+  fixAccessibility,
   requestAccessibility,
   requestMicrophone,
   requestInputMonitoring,
@@ -128,6 +129,18 @@ export function Onboarding({
   const inp = status.input_monitoring;
   const canEnter = acc && mic;
 
+  // The stale-grant case: macOS reports Accessibility as granted, but the Fn
+  // tap still can't be created because TCC is enforcing an earlier build's
+  // signature. Only flag it after a grace period — a fresh grant takes the
+  // tap thread a moment to spin up, and a false "still broken!" would undo
+  // the reassurance this screen exists to give.
+  const [accSince, setAccSince] = useState<number | null>(null);
+  useEffect(() => {
+    setAccSince((prev) => (acc ? (prev ?? Date.now()) : null));
+  }, [acc]);
+  const staleGrant =
+    acc && !status.hotkey_wired && accSince !== null && Date.now() - accSince > 7000;
+
   return (
     <div
       style={{
@@ -166,6 +179,47 @@ export function Onboarding({
           Grant these to <b>WhimprFlow</b>, in order. Each turns green here the moment macOS applies
           it — no relaunch needed.
         </p>
+
+        {staleGrant && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              padding: "14px 16px",
+              borderRadius: 12,
+              marginBottom: 14,
+              background: "#3a1517",
+              border: "1px solid #7f2a2e",
+              color: "#f3c9cc",
+              fontSize: 13,
+              lineHeight: 1.45,
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <b>Accessibility looks granted, but the Fn key still isn&apos;t wired up.</b> macOS is
+              enforcing the permission of an older build of WhimprFlow. Click Fix to clear it, then
+              enable WhimprFlow again in the Accessibility pane that opens — no relaunch needed.
+            </div>
+            <button
+              onClick={() => void fixAccessibility()}
+              style={{
+                cursor: "pointer",
+                border: "none",
+                borderRadius: 10,
+                padding: "9px 16px",
+                fontSize: 13,
+                fontWeight: 600,
+                fontFamily: font.ui,
+                color: "#fff",
+                background: "#a13a40",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Fix
+            </button>
+          </div>
+        )}
 
         <Step
           n={1}
@@ -223,8 +277,9 @@ export function Onboarding({
         </button>
 
         <p style={{ fontSize: 12, color: theme.textFaint, lineHeight: 1.5, marginTop: 16 }}>
-          If a permission stays grey after you flip it on in System Settings, toggle WhimprFlow off
-          and back on in that pane — the state here will update within a second.
+          If Accessibility stays grey even though System Settings shows it enabled, click Grant
+          again — WhimprFlow clears macOS&apos;s stale entry for older builds automatically and
+          re-prompts.
         </p>
       </div>
     </div>

@@ -41,9 +41,9 @@ const PTT_VK: u16 = VK_RCONTROL.0;
 static APP: OnceLock<AppHandle> = OnceLock::new();
 static CLOCK: OnceLock<Instant> = OnceLock::new();
 static RECORDING: AtomicBool = AtomicBool::new(false);
-/// Set once at startup if no Whisper model file exists on disk at all —
-/// distinct from "still loading". Mirrors the macOS flag in `hotkey.rs`.
-static ASR_MODEL_MISSING: AtomicBool = AtomicBool::new(false);
+/// True once the WH_KEYBOARD_LL hook is actually installed — the Windows
+/// analogue of macOS's `TAP_LIVE`, surfaced to the Hub as `hotkey_wired`.
+static HOOK_LIVE: AtomicBool = AtomicBool::new(false);
 static CAPTURE: OnceLock<Mutex<Option<whimpr_audio::CaptureHandle>>> = OnceLock::new();
 static ASR: OnceLock<Arc<whimpr_asr::WhisperEngine>> = OnceLock::new();
 static LOCAL: OnceLock<Mutex<Option<crate::local_llm::LocalWorker>>> = OnceLock::new();
@@ -90,12 +90,21 @@ fn now_ms() -> u64 {
 
 fn emit_bar(state: &'static str) {
     if let Some(app) = APP.get() {
-        #[derive(Clone, serde::Serialize)]
-        struct P {
-            state: &'static str,
-        }
-        let _ = app.emit_to(OVERLAY_LABEL, "whimpr://flowbar/state", P { state });
+        // Shared emitter also toggles the overlay window: visible for every
+        // state except idle.
+        crate::emit_flowbar_state(app, state);
     }
+}
+
+/// Whether the keyboard hook is live (see [`HOOK_LIVE`]).
+pub fn tap_live() -> bool {
+    HOOK_LIVE.load(Ordering::SeqCst)
+}
+
+/// Interface parity with the macOS layer; the hook install retries on its own,
+/// so this is a no-op flag reset for future fix flows.
+pub fn mark_tap_stale() {
+    HOOK_LIVE.store(false, Ordering::SeqCst);
 }
 
 /// The foreground process's executable name (e.g. "chrome.exe"), for per-app
@@ -365,6 +374,7 @@ fn spawn_hook_thread() {
             eprintln!("[whimpr:win] keyboard hook recovered — Right Ctrl is live now.");
             crate::diag::clear_last_error();
         }
+        HOOK_LIVE.store(true, Ordering::SeqCst);
         let _ = hook; // keeps the hook alive for the lifetime of this thread
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {}

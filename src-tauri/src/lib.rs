@@ -47,15 +47,18 @@ fn position_overlay(w: &WebviewWindow) {
     let scale = monitor.scale_factor();
     let msize = monitor.size();
     let mpos = monitor.position();
-    let Ok(wsize) = w.outer_size() else { return };
+    // A window that has never been shown reports outer_size 0 — fall back to the
+    // configured inner size so the first placement isn't offset by half a pill.
+    let wsize = w
+        .outer_size()
+        .ok()
+        .filter(|s| s.width > 0 && s.height > 0)
+        .or_else(|| w.inner_size().ok());
+    let Some(wsize) = wsize else { return };
     let inset = (40.0 * scale) as i32;
     let x = mpos.x + (msize.width as i32 - wsize.width as i32) / 2;
     let y = mpos.y + msize.height as i32 - wsize.height as i32 - inset;
     let _ = w.set_position(tauri::PhysicalPosition { x, y });
-    eprintln!(
-        "[whimpr] overlay placed: monitor {}x{} @({},{}) scale {:.1} -> window {}x{} @({},{})",
-        msize.width, msize.height, mpos.x, mpos.y, scale, wsize.width, wsize.height, x, y
-    );
 }
 
 fn build_overlay(app: &tauri::App) -> tauri::Result<WebviewWindow> {
@@ -75,10 +78,11 @@ fn build_overlay(app: &tauri::App) -> tauri::Result<WebviewWindow> {
     .skip_taskbar(true)
     .focused(false)
     .resizable(false)
-    .visible(true)
+    // Hidden at rest: the pill only exists while WhimprFlow is actually doing
+    // something (recording, cleaning up, flashing done, showing an error). The
+    // tray icon is the idle presence. See `emit_flowbar_state`.
+    .visible(false)
     .build()?;
-    position_overlay(&overlay);
-    let _ = overlay.show();
     Ok(overlay)
 }
 
@@ -91,9 +95,36 @@ fn build_hub(app: &tauri::App) -> tauri::Result<WebviewWindow> {
         .build()
 }
 
-fn emit_bar_state(app: &tauri::AppHandle, state: &'static str) {
-    let _ = app.emit_to(OVERLAY_LABEL, "whimpr://flowbar/state", BarStatePayload { state });
+/// Bar states where the pill window must exist. Idle (the rest state) hides it —
+/// the overlay is invisible until a dictation actually starts.
+fn bar_visible(state: &str) -> bool {
+    state != "idle"
 }
+
+/// Emit a flow-bar state to the overlay AND toggle its window visibility.
+///
+/// The single choke point every bar-state producer goes through (the macOS
+/// state machine in `hotkey.rs`, the Windows pipeline in `win.rs`, the
+/// diagnostics path in `diag.rs`, and the tray demo below), so the pill's
+/// on-screen existence can never drift out of sync with the state it shows.
+pub fn emit_flowbar_state(app: &tauri::AppHandle, state: &'static str) {
+    let _ = app.emit_to(OVERLAY_LABEL, "whimpr://flowbar/state", BarStatePayload { state });
+    if let Some(w) = app.get_webview_window(OVERLAY_LABEL) {
+        if bar_visible(state) {
+            // Re-anchor right before showing: the window may have never been
+            // mapped, or the screen layout may have changed while hidden.
+            position_overlay(&w);
+            let _ = w.show();
+            eprintln!("[whimpr] pill -> {state} (overlay shown)");
+        } else {
+            let _ = w.hide();
+            eprintln!("[whimpr] pill -> {state} (overlay hidden)");
+        }
+    } else {
+        eprintln!("[whimpr] pill -> {state} (no overlay window)");
+    }
+}
+
 
 #[tauri::command]
 fn get_settings() -> whimpr_core::Settings {
@@ -150,6 +181,10 @@ struct StatusReport {
     microphone_grant: permissions::Grant,
     charged_to: Option<String>,
     microphone_hint: Option<String>,
+    /// Whether the global hotkey is actually live. On macOS this is false for
+    /// the stale-TCC-entry case: System Settings shows WhimprFlow as enabled,
+    /// but the keyboard tap can't be created for this build's signature.
+    hotkey_wired: bool,
     has_openai_key: bool,
     has_anthropic_key: bool,
 }
@@ -164,6 +199,7 @@ fn get_status() -> StatusReport {
         microphone_grant: p.microphone_grant,
         charged_to: p.charged_to,
         microphone_hint: p.microphone_hint,
+        hotkey_wired: hotkey::tap_live(),
         has_openai_key: has_key("openai_api_key"),
         has_anthropic_key: has_key("anthropic_api_key"),
     }
@@ -206,15 +242,64 @@ fn request_microphone() {
         open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone");
     }
 }
+/// The one self-heal for every "Accessibility is wrong" case: clear any TCC
+/// entry for our bundle id with `tccutil` (removes the stale entry a previous
+/// build's code signature left behind — the case where System Settings shows
+/// WhimprFlow as enabled but the running build is refused), re-fire the native
+/// prompt (which re-registers us in the list), and open the Accessibility pane
+/// so the user can enable WhimprFlow fresh. The tap thread in `hotkey.rs`
+/// picks the new grant up the moment it lands — no relaunch needed.
+#[cfg(target_os = "macos")]
+pub(crate) fn reset_and_prompt_accessibility() -> Result<(), String> {
+    hotkey::mark_tap_stale();
+    let out = std::process::Command::new("/usr/bin/tccutil")
+        .args(["reset", "Accessibility", "com.whimpr.whimprflow"])
+        .output()
+        .map_err(|e| format!("failed to run tccutil: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "tccutil failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    eprintln!(
+        "[whimpr] tccutil reset done: {}",
+        String::from_utf8_lossy(&out.stdout).trim()
+    );
+    let _ = paste::prompt_accessibility();
+    open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
+    Ok(())
+}
 
-/// Request Accessibility — the permission that makes the Fn key work in every app and
-/// lets us type into other apps. Fire the native prompt, then open the pane.
+/// Request Accessibility — the permission that makes the Fn key work in every
+/// app and lets us type into other apps. Resets any stale entry first (a no-op
+/// when the grant was never made), then prompts and opens the pane.
 #[tauri::command]
 fn request_accessibility() {
     #[cfg(target_os = "macos")]
     {
-        let _ = paste::prompt_accessibility();
-        open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
+        if let Err(e) = reset_and_prompt_accessibility() {
+            eprintln!("[whimpr] accessibility reset/prompt failed: {e}");
+        }
+    }
+}
+
+/// Fix the stale-Accessibility case: System Settings shows WhimprFlow as
+/// enabled, but macOS is still enforcing the code signature of an earlier
+/// build, so the Fn tap can't be created even though `AXIsProcessTrusted`
+/// says yes (or, conversely, the app reads "not granted" while the pane shows
+/// it on). Same self-heal as `request_accessibility`; kept as its own command
+/// because the Hub presents it as a distinct "Fix" action.
+#[tauri::command]
+fn fix_accessibility() -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        reset_and_prompt_accessibility()?;
+        Ok("reset".to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok("unsupported".to_string())
     }
 }
 
@@ -265,6 +350,7 @@ pub fn run() {
             get_last_error,
             request_microphone,
             request_accessibility,
+            fix_accessibility,
             request_input_monitoring,
             set_api_key
         ])
@@ -307,8 +393,8 @@ pub fn run() {
                             let _ = w.set_focus();
                         }
                     }
-                    "demo_rec" => emit_bar_state(app, "recording"),
-                    "demo_idle" => emit_bar_state(app, "idle"),
+                    "demo_rec" => emit_flowbar_state(app, "recording"),
+                    "demo_idle" => emit_flowbar_state(app, "idle"),
                     "quit" => app.exit(0),
                     _ => {}
                 });

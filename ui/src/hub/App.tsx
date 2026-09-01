@@ -17,6 +17,7 @@ import {
   getLastError,
   onPermissions,
   requestAccessibility,
+  fixAccessibility,
   type Settings,
   type Status,
   type LastError,
@@ -155,6 +156,14 @@ export function App() {
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
 
+  // Grace-tracked "wired" check: Accessibility can read as granted while the
+  // Fn tap is still dead (stale TCC entry from an earlier build). Only flag it
+  // after the tap thread has had a fair chance to spin up.
+  const [accSince, setAccSince] = useState<number | null>(null);
+  useEffect(() => {
+    setAccSince((prev) => (status.accessibility ? (prev ?? Date.now()) : null));
+  }, [status.accessibility]);
+
   useEffect(() => {
     getSettings().then(setLocalSettings);
     refresh();
@@ -238,8 +247,16 @@ export function App() {
   // Two independent reasons for the post-onboarding banner: Accessibility
   // lapsed after entry (checked live against `status`, not just the one-time
   // onboarding gate), or the pipeline reported some other failure (hotkey tap
-  // dead, paste failed, empty transcript, …).
+  // dead, paste failed, empty transcript, …). A third case sits between them:
+  // Accessibility reads as granted but the tap never wired up (stale TCC
+  // entry), which needs the one-click Fix, not a re-grant.
   const accessibilityLapsed = entered && !status.accessibility;
+  const staleWired =
+    entered &&
+    status.accessibility &&
+    !status.hotkey_wired &&
+    accSince !== null &&
+    Date.now() - accSince > 10000;
   const banner = errorDismissed
     ? null
     : accessibilityLapsed
@@ -249,9 +266,17 @@ export function App() {
           actionLabel: "Grant Accessibility",
           onAction: () => requestAccessibility(),
         }
-      : lastError
-        ? { headline: lastError.headline, detail: lastError.detail }
-        : null;
+      : staleWired
+        ? {
+            headline: "Fn key isn't wired up",
+            detail:
+              "macOS still holds a permission entry for an older build of WhimprFlow. Click Fix to clear it, then enable WhimprFlow again in the pane that opens.",
+            actionLabel: "Fix Accessibility",
+            onAction: () => void fixAccessibility(),
+          }
+        : lastError
+          ? { headline: lastError.headline, detail: lastError.detail }
+          : null;
 
   return (
     <div

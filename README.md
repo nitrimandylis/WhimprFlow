@@ -21,8 +21,7 @@ Both platforms are build-from-source only for now — there's no signed installe
 
 - **On-device ASR** — Whisper (via `whisper.cpp`), running on the GPU. Ships a small English model by default; larger models are auto-preferred if present.
 - **Local LLM cleanup** — Qwen3-4B-Instruct (via `llama.cpp`) runs as a separate worker process and cleans the transcript: removes fillers, resolves spoken self-corrections ("meet at 2… no wait, 3" → "3"), applies spoken punctuation, and formats lists/paragraphs. Deterministic gates guard against over-editing, with a raw-transcript fallback.
-- **Optional cloud cleanup** — OpenAI (default) / Anthropic, behind one trait. Keys are stored in the OS keychain (macOS Keychain / Windows Credential Manager), **never in a file**.
-- **Floating pill UI** — a small always-on-top bar showing idle / recording / processing states.
+- **Floating pill UI** — an always-on-top bar that appears only while WhimprFlow is working (recording, cleaning up, the done flash, or an error) and disappears the moment it's idle, so it never sits on your screen at rest.
 - **Personal dictionary + auto-learn** — teach it names and terms; on macOS a post-paste Accessibility observer watches for a one-word correction and learns it automatically (conservative filters to avoid junk). *Auto-learn capture is macOS-only so far.*
 - **Usage stats** — words dictated, words-per-minute, day streak, time saved, 7-day activity, all stored locally.
 
@@ -116,10 +115,11 @@ why it looked like nothing was happening at all). If you still hit this:
 - **macOS — "granted but still nothing" after a rebuild.** Every local
   `tauri build` produces a differently-signed binary, and macOS can leave a
   stale Accessibility entry for the old signature that *looks* granted but
-  isn't. Fix: in System Settings → Privacy & Security → Accessibility, remove
-  WhimprFlow with the **−** button and re-add it (or toggle it off/on), then
-  relaunch. WhimprFlow's pill and Hub will now show "Fn key isn't wired up"
-  when this happens instead of just doing nothing.
+  isn't. WhimprFlow now heals this itself: on launch it clears any stale TCC
+  entry for its bundle id, re-prompts, and opens **System Settings → Privacy &
+  Security → Accessibility** — just enable WhimprFlow there (and if the Hub
+  ever shows "Fn key isn't wired up" while the pane says it's on, click its
+  **Fix Accessibility** button). No relaunch needed either way.
 - **Windows — Right Ctrl does nothing.** Another app may be holding a
   conflicting global keyboard hook (some anti-cheat/security tools do this);
   close it and relaunch WhimprFlow.
