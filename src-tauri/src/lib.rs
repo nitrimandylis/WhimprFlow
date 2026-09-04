@@ -162,11 +162,14 @@ fn desired_overlay_position(
     let (ax, ay, aw, ah) = work_area_logical(&monitor);
     let (ww, wh) = (OVERLAY_W_PT, OVERLAY_H_PT);
 
+    let scale = monitor.scale_factor();
     let (x, y) = match settings.pill_pos {
-        // Still clamped, so a stale pinned position can't hide under the Dock.
+        // pill_pos is stored in physical pixels (from outerPosition), but
+        // work_area_logical and LogicalPosition are in points. Divide by
+        // scale factor to convert, or the pill jumps on HiDPI displays.
         Some((px, py)) if !following => (
-            (px as f64).clamp(ax, (ax + aw - ww).max(ax)),
-            (py as f64).clamp(ay, (ay + ah - wh).max(ay)),
+            (px as f64 / scale).clamp(ax, (ax + aw - ww).max(ax)),
+            (py as f64 / scale).clamp(ay, (ay + ah - wh).max(ay)),
         ),
         _ => whimpr_core::settings::pill_placement(
             (ax, ay, aw, ah),
@@ -542,7 +545,7 @@ fn set_settings(app: tauri::AppHandle, settings: whimpr_core::Settings) {
     if let Some(w) = app.get_webview_window(OVERLAY_LABEL) {
         position_overlay(&w);
     }
-    sync_pill_visibility(&app, "idle");
+    sync_pill_visibility(&app, hotkey::last_bar());
 }
 
 /// Stop and finalize the current recording — the overlay pill's red Stop button.
@@ -930,13 +933,15 @@ pub fn run() {
                     "quit" => app.exit(0),
                     _ => {}
                 });
-            // Use the monochrome tray.png for the menu bar (template image).
-            // Falls back to the app icon if tray.png is missing.
-            let tray_icon = tauri::image::Image::from_path("icons/tray.png")
-                .or_else(|_| tauri::image::Image::from_path(
-                    app.path().resource_dir().unwrap_or_default().join("icons/tray.png")
-                ))
+            // Monochrome tray.png as a macOS template image (adapts to
+            // light/dark menu bar). Bundled via tauri.conf.json resources.
+            // Falls back to the full-color app icon if tray.png is missing.
+            let tray_icon = app
+                .path()
+                .resource_dir()
                 .ok()
+                .map(|d| d.join("icons/tray.png"))
+                .and_then(|p| tauri::image::Image::from_path(p).ok())
                 .or_else(|| app.default_window_icon().cloned());
             if let Some(icon) = tray_icon {
                 tray = tray.icon(icon).icon_as_template(true);

@@ -313,7 +313,7 @@ mod imp {
     // The pill's Stop and Cancel buttons, and click-to-start, all feed the SAME
     // state machine the Fn key does — rather than a parallel code path that could
     // drift out of sync with it.
-    fn last_bar() -> &'static str {
+    pub fn last_bar() -> &'static str {
         LAST_BAR
             .get()
             .map(|m| *m.lock().unwrap())
@@ -1124,10 +1124,10 @@ mod imp {
 #[cfg(target_os = "macos")]
 pub use imp::{
     cancel_dictation, current_settings, dictionary_add, dictionary_entries, dictionary_learn,
-    dictionary_remove, history, install, mark_tap_stale, rebuild_providers, scratchpad_capture,
-    scratchpad_path, set_scratchpad_capture, snippet_add, snippet_remove, snippets, stats_summary,
-    stop_dictation, tap_live, transform_set_enabled, transforms, trigger_hands_free, ui_cancel,
-    ui_start, ui_stop, update_settings,
+    dictionary_remove, history, install, last_bar, mark_tap_stale, rebuild_providers,
+    scratchpad_capture, scratchpad_path, set_scratchpad_capture, snippet_add, snippet_remove,
+    snippets, stats_summary, stop_dictation, tap_live, transform_set_enabled, transforms,
+    trigger_hands_free, ui_cancel, ui_start, ui_stop, update_settings,
 };
 
 // Windows uses the real (but unverified) platform layer in `crate::win`.
@@ -1185,12 +1185,15 @@ mod other {
         true
     }
     pub fn mark_tap_stale() {}
+    pub fn last_bar() -> &'static str {
+        "idle"
+    }
 }
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub use other::{
     cancel_dictation, current_settings, dictionary_add, dictionary_entries, dictionary_learn,
-    dictionary_remove, history, install, mark_tap_stale, rebuild_providers, scratchpad_capture,
-    scratchpad_path, set_scratchpad_capture, snippet_add, snippet_remove, snippets, stats_summary,
-    stop_dictation, tap_live, transform_set_enabled, transforms, trigger_hands_free, ui_cancel,
-    ui_start, ui_stop, update_settings,
+    dictionary_remove, history, install, last_bar, mark_tap_stale, rebuild_providers,
+    scratchpad_capture, scratchpad_path, set_scratchpad_capture, snippet_add, snippet_remove,
+    snippets, stats_summary, stop_dictation, tap_live, transform_set_enabled, transforms,
+    trigger_hands_free, ui_cancel, ui_start, ui_stop, update_settings,
 };
