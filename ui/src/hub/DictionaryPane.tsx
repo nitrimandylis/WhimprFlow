@@ -10,12 +10,12 @@ import {
   type DictEntry,
 } from "./api";
 
-type Tab = "all" | "personal" | "shared";
+type Tab = "all" | "manual" | "auto";
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "all", label: "All" },
-  { key: "personal", label: "Personal" },
-  { key: "shared", label: "Shared with team" },
+  { key: "manual", label: "Manual" },
+  { key: "auto", label: "Auto-learned" },
 ];
 
 function Tabs({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
@@ -172,6 +172,7 @@ export function DictionaryPane() {
   const [tab, setTab] = useState<Tab>("all");
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
+  const [sortAsc, setSortAsc] = useState(true);
 
   const load = () => getDictionary().then(setEntries);
   useEffect(() => {
@@ -184,7 +185,12 @@ export function DictionaryPane() {
   };
 
   const q = query.trim().toLowerCase();
-  const filtered = q ? entries.filter((e) => e.correct.toLowerCase().includes(q)) : entries;
+  let filtered = entries
+    .filter((e) => tab === "all" || (tab === "manual" ? !e.auto : e.auto))
+    .filter((e) => !q || e.correct.toLowerCase().includes(q));
+  filtered = [...filtered].sort((a, b) =>
+    sortAsc ? a.correct.localeCompare(b.correct) : b.correct.localeCompare(a.correct),
+  );
 
   return (
     <div style={{ maxWidth: 760 }}>
@@ -214,7 +220,6 @@ export function DictionaryPane() {
 
       <Tabs tab={tab} onChange={setTab} />
 
-      {/* Search + sort */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, marginBottom: 14 }}>
         <div
           style={{
@@ -245,7 +250,8 @@ export function DictionaryPane() {
           />
         </div>
         <button
-          title="Sort"
+          title={sortAsc ? "Sort Z-A" : "Sort A-Z"}
+          onClick={() => setSortAsc((v) => !v)}
           style={{
             display: "flex",
             alignItems: "center",
@@ -272,29 +278,21 @@ export function DictionaryPane() {
         />
       )}
 
-      {tab === "shared" ? (
-        <Card>
-          <div style={{ padding: "36px 8px", textAlign: "center", color: theme.textFaint, fontSize: 13.5 }}>
-            Team sharing coming soon.
+      <Card pad={filtered.length ? 8 : 22}>
+        {filtered.length === 0 ? (
+          <div style={{ padding: "30px 8px", textAlign: "center", color: theme.textFaint, fontSize: 13.5 }}>
+            {entries.length === 0
+              ? "No words yet. Add one, or WhimprFlow will auto-learn the terms you correct."
+              : `No words match "${query}".`}
           </div>
-        </Card>
-      ) : (
-        <Card pad={filtered.length ? 8 : 22}>
-          {filtered.length === 0 ? (
-            <div style={{ padding: "30px 8px", textAlign: "center", color: theme.textFaint, fontSize: 13.5 }}>
-              {entries.length === 0
-                ? "No words yet. Add one, or WhimprFlow will auto-learn the terms you correct."
-                : `No words match “${query}”.`}
-            </div>
-          ) : (
-            <div style={{ padding: "4px 14px" }}>
-              {filtered.map((e) => (
-                <EntryRow key={e.correct} entry={e} onRemove={() => void remove(e.correct)} />
-              ))}
-            </div>
-          )}
-        </Card>
-      )}
+        ) : (
+          <div style={{ padding: "4px 14px" }}>
+            {filtered.map((e) => (
+              <EntryRow key={e.correct} entry={e} onRemove={() => void remove(e.correct)} />
+            ))}
+          </div>
+        )}
+      </Card>
     </div>
   );
 }

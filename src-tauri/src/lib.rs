@@ -651,6 +651,42 @@ fn get_history() -> Vec<whimpr_core::HistoryItem> {
     hotkey::history(200)
 }
 
+/// Export dictation history as JSON or plain text.
+#[tauri::command]
+fn export_history(format: String) -> Result<String, String> {
+    let items = hotkey::history(100_000);
+    match format.as_str() {
+        "json" => serde_json::to_string_pretty(&items).map_err(|e| e.to_string()),
+        "txt" => {
+            let lines: Vec<String> = items
+                .iter()
+                .map(|it| {
+                    let secs = it.ts_unix;
+                    let app = it.app.as_deref().unwrap_or("unknown");
+                    format!("[{secs}] ({app}) {}", it.text)
+                })
+                .collect();
+            Ok(lines.join("\n"))
+        }
+        _ => Err(format!("unknown format: {format}")),
+    }
+}
+
+/// Version and git hash for the Help pane.
+#[derive(Clone, Serialize)]
+struct BuildInfoDto {
+    version: String,
+    git_hash: String,
+}
+
+#[tauri::command]
+fn get_build_info() -> BuildInfoDto {
+    BuildInfoDto {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        git_hash: env!("GIT_HASH").to_string(),
+    }
+}
+
 /// Copy arbitrary text to the system clipboard, for the Hub's history "Copy"
 /// button. Note this is a plain set — unlike `paste::paste_text`, which restores
 /// the previous clipboard afterwards, here the user explicitly asked for the
@@ -931,7 +967,9 @@ pub fn run() {
             request_accessibility,
             fix_accessibility,
             request_input_monitoring,
-            set_api_key
+            set_api_key,
+            export_history,
+            get_build_info
         ])
         .setup(|app| {
             // Regular app: shows in the Dock with a normal, focusable main window.

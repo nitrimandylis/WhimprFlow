@@ -110,15 +110,6 @@ export const DEFAULT_KEYBINDINGS: KeyBindings = {
   undo_last: { meta: true, ctrl: false, alt: false, shift: true, key: { kind: "char", value: "Z" } },
 };
 
-// ponytail: backend stub missing, remove when implemented
-export async function getKeybindings(): Promise<KeyBindings> {
-  try {
-    return await invoke<KeyBindings>("get_keybindings");
-  } catch {
-    return DEFAULT_KEYBINDINGS;
-  }
-}
-
 export async function listMicrophones(): Promise<string[]> {
   try {
     return await invoke<string[]>("list_microphones");
@@ -368,7 +359,6 @@ export async function getHistory(limit?: number): Promise<HistoryItem[]> {
   }
 }
 
-// ponytail: backend stub missing, remove when implemented
 export async function exportHistory(format: "json" | "txt"): Promise<string> {
   return invoke<string>("export_history", { format });
 }
@@ -538,78 +528,17 @@ export async function removeDictionaryEntry(correct: string): Promise<void> {
   }
 }
 
-// ── Health ───────────────────────────────────────────────────────────────────
-// Is dictation actually ready end to end (ASR model, local LLM, mic +
-// accessibility permissions). Mirrors the shell's hotkey::Health.
-export interface Health {
-  asr_ready: boolean;
-  asr_model: string | null;
-  local_llm_ready: boolean;
-  microphone: boolean;
-  accessibility: boolean;
-}
-
-// ponytail: backend stub missing, remove when implemented
-export async function getHealth(): Promise<Health> {
-  try {
-    return await invoke<Health>("get_health");
-  } catch {
-    return {
-      asr_ready: false,
-      asr_model: null,
-      local_llm_ready: false,
-      microphone: false,
-      accessibility: false,
-    };
-  }
-}
-
-export interface ModelProgress {
-  file_name: string;
-  downloaded: number;
-  total: number;
-}
-
-/** Download recommended Whisper model; listen to `whimpr://model/progress` for bytes. */
-// ponytail: backend stub missing, remove when implemented
-export async function downloadAsrModel(modelId?: string): Promise<string> {
-  return invoke<string>("download_asr_model", { modelId: modelId ?? null });
-}
-
-// ponytail: backend stub missing, remove when implemented
-export async function reloadAsr(): Promise<void> {
-  try {
-    await invoke("reload_asr");
-  } catch (e) {
-    console.error("reloadAsr failed", e);
-  }
-}
-
+// ── Build info ──────────────────────────────────────────────────────────────
 export interface BuildInfo {
   version: string;
   git_hash: string;
 }
 
-// ponytail: backend stub missing, remove when implemented
 export async function getBuildInfo(): Promise<BuildInfo> {
   try {
     return await invoke<BuildInfo>("get_build_info");
   } catch {
-    return { version: "1.0.0", git_hash: "dev" };
-  }
-}
-
-// ponytail: backend stub missing, remove when implemented
-export async function exportDiagnostics(): Promise<string> {
-  return invoke<string>("export_diagnostics");
-}
-
-// ponytail: backend stub missing, remove when implemented
-export async function checkNetwork(): Promise<boolean> {
-  try {
-    return await invoke<boolean>("check_network");
-  } catch {
-    return true;
+    return { version: "0.0.0", git_hash: "dev" };
   }
 }
 

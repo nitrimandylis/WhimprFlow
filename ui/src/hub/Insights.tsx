@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { font } from "../tokens/values";
 import { theme } from "./theme";
 import { Card, PageTitle, useStats } from "./ui";
@@ -129,8 +128,7 @@ function ActivityBars({ data }: { data: number[] }) {
   );
 }
 
-// ── Contribution heatmap (illustrative) ──────────────────────────────────────
-const HEAT_WEEKS = 12;
+// ── Week strip (one square per day, real data only) ─────────────────────────
 
 function level(v: number, max: number): number {
   if (v <= 0) return 0;
@@ -143,35 +141,30 @@ function level(v: number, max: number): number {
 
 const HEAT_COLORS = [theme.track, "rgba(34,195,182,0.28)", "rgba(34,195,182,0.5)", "rgba(34,195,182,0.72)", theme.accentDeep];
 
-function Heatmap({ last7 }: { last7: number[] }) {
+function WeekStrip({ last7 }: { last7: number[] }) {
   const max = Math.max(1, ...last7);
-  const cols: number[][] = [];
-  for (let w = 0; w < HEAT_WEEKS; w++) {
-    const col: number[] = [];
-    for (let day = 0; day < 7; day++) {
-      // Only the most-recent week (rightmost column) carries real data.
-      col.push(w === HEAT_WEEKS - 1 ? (last7[day] ?? 0) : 0);
-    }
-    cols.push(col);
-  }
+  const todayIdx = new Date().getDay();
   return (
-    <div style={{ display: "flex", gap: 4, overflowX: "auto" }}>
-      {cols.map((col, w) => (
-        <div key={w} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          {col.map((v, day) => (
+    <div style={{ display: "flex", gap: 5 }}>
+      {last7.map((v, i) => {
+        const dow = (todayIdx - (last7.length - 1 - i) + 7) % 7;
+        return (
+          <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
             <div
-              key={day}
               title={v > 0 ? `${fmtNum(v)} words` : "no activity"}
               style={{
-                width: 13,
-                height: 13,
-                borderRadius: 3.5,
+                width: 18,
+                height: 18,
+                borderRadius: 4,
                 background: HEAT_COLORS[level(v, max)],
               }}
             />
-          ))}
-        </div>
-      ))}
+            <div style={{ fontSize: 9.5, color: theme.textFaint }}>
+              {i === last7.length - 1 ? "T" : DOW[dow]}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -220,42 +213,6 @@ function ConsistencyRing({ activeDays }: { activeDays: number }) {
   );
 }
 
-// ── Tabs ─────────────────────────────────────────────────────────────────────
-type Tab = "usage" | "voice";
-
-function Tabs({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
-  const items: { key: Tab; label: string }[] = [
-    { key: "usage", label: "Your Usage" },
-    { key: "voice", label: "Your Voice" },
-  ];
-  return (
-    <div style={{ display: "flex", gap: 24, borderBottom: `1px solid ${theme.border}`, marginBottom: 22 }}>
-      {items.map((it) => {
-        const active = tab === it.key;
-        return (
-          <button
-            key={it.key}
-            onClick={() => onChange(it.key)}
-            style={{
-              border: "none",
-              background: "transparent",
-              cursor: "pointer",
-              fontFamily: font.ui,
-              fontSize: 14,
-              fontWeight: active ? 600 : 500,
-              color: active ? theme.textStrong : theme.textMuted,
-              padding: "0 0 12px",
-              marginBottom: -1,
-              borderBottom: `2px solid ${active ? theme.accent : "transparent"}`,
-            }}
-          >
-            {it.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 function UsageTab({ stats }: { stats: StatsSummary }) {
   const activeDays = stats.last7_words.filter((value) => value > 0).length;
@@ -265,7 +222,7 @@ function UsageTab({ stats }: { stats: StatsSummary }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       {/* Top row — three stat cards */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 18 }}>
-        <StatCard label="Words per minute" foot="Top 5% of dictators">
+        <StatCard label="Words per minute" foot={`avg ${fmtNum(stats.avg_wpm)} WPM`}>
           <Gauge value={stats.avg_wpm} max={140} />
         </StatCard>
 
@@ -295,9 +252,9 @@ function UsageTab({ stats }: { stats: StatsSummary }) {
               🔥 {stats.day_streak} {stats.day_streak === 1 ? "day" : "days"}
             </div>
           </div>
-          <Heatmap last7={stats.last7_words} />
+          <WeekStrip last7={stats.last7_words} />
           <div style={{ fontSize: 12, color: theme.textFaint, marginTop: 14 }}>
-            Each square is a day. Keep the streak alive by dictating something every day.
+            Keep the streak alive by dictating something every day.
           </div>
         </Card>
       </div>
@@ -336,25 +293,8 @@ function UsageTab({ stats }: { stats: StatsSummary }) {
   );
 }
 
-function VoiceTab() {
-  return (
-    <Card>
-      <div style={{ padding: "28px 8px", textAlign: "center" }}>
-        <div style={{ fontFamily: font.serif, fontSize: 20, fontWeight: 600, color: theme.textStrong }}>
-          Your Voice
-        </div>
-        <p style={{ color: theme.textMuted, fontSize: 14, lineHeight: 1.55, maxWidth: 420, margin: "10px auto 0" }}>
-          Tone, pace, and filler-word insights are on the way. As you dictate, WhimprFlow will surface
-          patterns in how you speak — right here.
-        </p>
-      </div>
-    </Card>
-  );
-}
-
 export function Insights() {
   const stats = useStats();
-  const [tab, setTab] = useState<Tab>("usage");
   return (
     <div style={{ maxWidth: 1000 }}>
       <PageTitle>Insights</PageTitle>
@@ -364,10 +304,7 @@ export function Insights() {
           body="Hold your dictation key and start speaking."
         />
       ) : (
-        <>
-          <Tabs tab={tab} onChange={setTab} />
-          {tab === "usage" ? <UsageTab stats={stats} /> : <VoiceTab />}
-        </>
+        <UsageTab stats={stats} />
       )}
     </div>
   );

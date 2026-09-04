@@ -1,7 +1,9 @@
+import { useEffect, useState } from "react";
 import { font } from "../tokens/values";
 import { theme } from "./theme";
-import { Card, PageTitle } from "./ui";
+import { Button, Card, PageTitle } from "./ui";
 import { Icon, type IconName } from "./icons";
+import { getBuildInfo, exportHistory, copyToClipboard, type BuildInfo } from "./api";
 
 const TIPS: { icon: IconName; title: string; body: string }[] = [
   {
@@ -27,6 +29,25 @@ const TIPS: { icon: IconName; title: string; body: string }[] = [
 ];
 
 export function Help() {
+  const [build, setBuild] = useState<BuildInfo | null>(null);
+  const [exportMsg, setExportMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    getBuildInfo().then(setBuild);
+  }, []);
+
+  const doExport = async (format: "json" | "txt") => {
+    try {
+      const data = await exportHistory(format);
+      await copyToClipboard(data);
+      setExportMsg(`Copied ${format.toUpperCase()} to clipboard`);
+      setTimeout(() => setExportMsg(null), 2000);
+    } catch {
+      setExportMsg("Export failed");
+      setTimeout(() => setExportMsg(null), 2000);
+    }
+  };
+
   return (
     <div style={{ maxWidth: 720 }}>
       <PageTitle sub="Tips, support, and diagnostics.">Help</PageTitle>
@@ -64,6 +85,26 @@ export function Help() {
           >
             support@whimprflow.com
           </a>
+        </div>
+      </Card>
+
+      <Card style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: 15, fontWeight: 650, color: theme.textStrong, marginBottom: 8 }}>
+          Export History
+        </div>
+        <div style={{ color: theme.textMuted, fontSize: 13, lineHeight: 1.45, marginBottom: 12 }}>
+          Copy your full dictation history to the clipboard.
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <Button variant="ghost" size="sm" onClick={() => void doExport("json")}>
+            Copy as JSON
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => void doExport("txt")}>
+            Copy as text
+          </Button>
+          {exportMsg && (
+            <span style={{ fontSize: 12, color: theme.accentDeep, fontWeight: 600 }}>{exportMsg}</span>
+          )}
         </div>
       </Card>
 
@@ -105,6 +146,12 @@ export function Help() {
           </Card>
         ))}
       </div>
+
+      {build && (
+        <div style={{ marginTop: 20, fontSize: 12, color: theme.textFaint, textAlign: "center" }}>
+          WhimprFlow v{build.version} ({build.git_hash})
+        </div>
+      )}
     </div>
   );
 }

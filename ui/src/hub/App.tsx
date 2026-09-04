@@ -13,11 +13,9 @@ import { TransformsPane } from "./TransformsPane";
 import { StylePane } from "./StylePane";
 import { ShortcutsPane } from "./ShortcutsPane";
 import { Help } from "./Help";
-import { ComingSoon } from "./ComingSoon";
 import { Walkthrough, shouldShowWalkthrough } from "./Walkthrough";
 import { KeyboardCheatsheet } from "./KeyboardCheatsheet";
 import { gsap, prefersReduced, EASE } from "./anim";
-import type { IconName } from "./icons";
 import {
   getSettings,
   setSettings,
@@ -132,10 +130,6 @@ function RoutedPage({ page, children }: { page: Page; children: React.ReactNode 
   }, [page]);
   return <div ref={ref}>{children}</div>;
 }
-
-// Every screen is built now; kept so a future stub has somewhere to live.
-const SOON: Partial<Record<Page, { icon: IconName; title: string; desc: string }>> = {};
-
 export function App() {
   const [page, setPage] = useState<Page>("home");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
@@ -294,8 +288,6 @@ export function App() {
     return <Onboarding status={status} refresh={refresh} onEnter={markEntered} />;
   }
 
-  const soon = SOON[page];
-
   // Two independent reasons for the post-onboarding banner: Accessibility
   // lapsed after entry (checked live against `status`, not just the one-time
   // onboarding gate), or the pipeline reported some other failure (hotkey tap
@@ -367,7 +359,6 @@ export function App() {
                 <SettingsPane settings={settings} onChange={update} status={status} refresh={refresh} />
               )}
               {page === "help" && <Help />}
-              {soon && <ComingSoon icon={soon.icon} title={soon.title} desc={soon.desc} />}
             </RoutedPage>
           </div>
         </main>
