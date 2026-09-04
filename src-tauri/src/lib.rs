@@ -457,6 +457,24 @@ fn build_overlay(app: &tauri::App) -> tauri::Result<WebviewWindow> {
     // tray icon is the idle presence. See `emit_flowbar_state`.
     .visible(false)
     .build()?;
+
+    // Show the overlay on every macOS Space, not just the one it was created on.
+    // Without this, switching desktops loses the pill until you switch back.
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::NSWindow;
+        if let Ok(ns_ptr) = overlay.ns_window() {
+            let ns_window: &NSWindow = unsafe { &*(ns_ptr as *const NSWindow) };
+            unsafe {
+                // CanJoinAllSpaces (1 << 0) | FullScreenAuxiliary (1 << 8)
+                // FullScreenAuxiliary keeps it visible over full-screen apps too.
+                ns_window.setCollectionBehavior(
+                    objc2_app_kit::NSWindowCollectionBehavior(1 | (1 << 8)),
+                );
+            }
+        }
+    }
+
     // Deliberately NOT positioned here: settings (including any dragged position)
     // are only loaded once hotkey::install runs, so setup() places it afterwards.
     Ok(overlay)

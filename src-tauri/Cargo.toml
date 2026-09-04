@@ -50,7 +50,7 @@ tauri-plugin-single-instance = "2"
 macos-accessibility-client = "0.0.1"
 # Frontmost-app detection (paste-target → per-app cleanup formatting). Already in
 # the tree via Tauri; declared here so we can call NSWorkspace directly.
-objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSRunningApplication"] }
+objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSRunningApplication", "NSWindow", "NSResponder"] }
 objc2-foundation = { version = "0.3", features = ["NSString"] }
 objc2-av-foundation = { version = "0.3", features = ["AVCaptureDevice", "AVMediaFormat"] }
 # Obj-C block support + the objc2 runtime `Bool`, for the AVCaptureDevice

@@ -8,20 +8,37 @@ A **local-first, cross-platform voice dictation app** — hold a key, speak, and
 
 ## About this fork
 
-This is a fork of [`Blueturboguy07/WhimprFlow`](https://github.com/Blueturboguy07/WhimprFlow)
-with the overlay reworked, the four placeholder screens implemented, and a
-number of settings that existed in the UI but were never wired to anything.
+A polished fork of [`Blueturboguy07/WhimprFlow`](https://github.com/Blueturboguy07/WhimprFlow),
+merging the best community PRs into a single working build for daily use on macOS.
 
-**Headlines:** multi-language dictation · configurable push-to-talk key · working
-Flow Bar buttons and hover controls · correct pill placement on multi-monitor and
-mixed-DPI setups · Snippets · Transforms · Style · Scratchpad · copy-from-history
-· launch at login · audio cues · a self-contained app bundle.
+**What's new over upstream:**
+- Multi-language dictation (Greek, Spanish, etc. transcribed to English or native)
+- Configurable push-to-talk key (Fn/Globe, right Cmd/Opt/Ctrl)
+- Dock visibility toggle (menu-bar-only or Dock app)
+- Overlay pill visible on all Spaces and full-screen apps
+- Pill hidden at idle, correct placement on multi-monitor/mixed-DPI setups
+- Working Flow Bar buttons (Cancel/Stop were dead in upstream)
+- Accessibility self-heal after rebuilds (no more stale TCC grants)
+- API key saving fix, settings debounce, single-instance guard
+- "Next line" no longer eats words from ordinary speech
+- Local LLM cleanup worker properly bundled
+- Dark/light theming, GSAP motion, new app icon
+- Shortcuts pane with conflict detection
+- Snippets, Transforms, Style, Scratchpad panes
+- Launch at login, audio cues, copy-from-history
 
-Full detail, including what was broken and why, is in **[CHANGELOG-FORK.md](CHANGELOG-FORK.md)**.
+**Scope:** macOS on Apple Silicon. Windows will not build without further work.
 
-**Scope:** macOS on Apple Silicon. `src-tauri/src/win.rs` has not been updated and
-is missing the functions added here, so the Windows target will not build without
-further work.
+### Credits
+
+Built on the work of the original creator and the open-source community:
+
+- [**Blueturboguy07**](https://github.com/Blueturboguy07) — original WhimprFlow
+- [**patelvraj810**](https://github.com/patelvraj810) (PR #4) — dock toggle, pill fixes, multi-lang ASR, push-to-talk config, Snippets/Transforms/Style/Scratchpad
+- [**ch1kim0n1**](https://github.com/ch1kim0n1) (PR #2) — dark/light theming, GSAP motion, app icon, shortcuts pane
+- PR #6 author — key saving fix, settings debounce, single-instance guard, cloud STT
+- PR #8 author — layout-cue word deletion fix
+- PR #9 author — accessibility self-heal, pill hiding, cleanup worker wiring
 
 ---
 
