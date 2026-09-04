@@ -18,7 +18,7 @@ whimpr-ipc = { path = "../crates/whimpr-ipc" }
 whimpr-audio = { path = "../crates/whimpr-audio" }
 whimpr-asr = { path = "../crates/whimpr-asr" }
 whimpr-cleanup = { path = "../crates/whimpr-cleanup" }
-keyring = "3"
+keyring = { version = "3", features = ["apple-native", "windows-native"] }
 strsim = "0.11"
 tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
 serde = { workspace = true }
@@ -39,6 +39,12 @@ windows = { version = "0.58", features = [
     "Win32_System_LibraryLoader",
     "Win32_System_ProcessStatus",
 ] }
+
+# Only Windows/Linux need this: relaunching the exe otherwise spawns a second,
+# independent process (duplicate taskbar entry). macOS's Dock re-activates the
+# existing app instead, so the plugin isn't needed (and isn't supported) there.
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 macos-accessibility-client = "0.0.1"

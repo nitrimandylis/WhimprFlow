@@ -561,6 +561,26 @@ mod imp {
                 let _ = ANTHROPIC.set(Mutex::new(anthropic));
             }
         }
+        sync_local_worker(settings.cleanup_mode);
+    }
+
+    /// Start (or stop) the local llama.cpp cleanup worker to match the current
+    /// cleanup mode — it's only worth the RAM/CPU when `Local` is actually selected.
+    fn sync_local_worker(mode: CleanupMode) {
+        let Some(slot) = LOCAL.get() else { return };
+        if matches!(mode, CleanupMode::Local) {
+            if slot.lock().unwrap().is_none() {
+                std::thread::spawn(|| {
+                    if let Some(w) = crate::local_llm::spawn_default() {
+                        if let Some(slot) = LOCAL.get() {
+                            *slot.lock().unwrap() = Some(w);
+                        }
+                    }
+                });
+            }
+        } else {
+            *slot.lock().unwrap() = None;
+        }
     }
 
     /// Clean a raw transcript per the current settings (mode + level), feeding in the
@@ -990,14 +1010,8 @@ mod imp {
         let _ = STATS.set(Mutex::new(whimpr_core::StatsStore::load(&stats_path())));
         // Bind the push-to-talk key before the tap is created.
         apply_live_settings(&current_settings());
+        let _ = LOCAL.set(Mutex::new(None));
         rebuild_providers();
-
-        // Start the local cleanup worker in the background (model load takes a few
-        // seconds; the first local cleanup waits for it, subsequent ones are fast).
-        std::thread::spawn(|| {
-            let worker = crate::local_llm::spawn_default();
-            let _ = LOCAL.set(Mutex::new(worker));
-        });
 
         // Accessibility is the ONE permission that makes the Fn CGEventTap global AND
         // lets us post the Cmd+V paste into other apps. Without it, a keyboard tap is

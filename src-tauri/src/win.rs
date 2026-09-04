@@ -45,7 +45,7 @@ static RECORDING: AtomicBool = AtomicBool::new(false);
 /// analogue of macOS's `TAP_LIVE`, surfaced to the Hub as `hotkey_wired`.
 static HOOK_LIVE: AtomicBool = AtomicBool::new(false);
 static CAPTURE: OnceLock<Mutex<Option<whimpr_audio::CaptureHandle>>> = OnceLock::new();
-static ASR: OnceLock<Arc<whimpr_asr::WhisperEngine>> = OnceLock::new();
+static ASR: OnceLock<Mutex<Option<Arc<dyn AsrEngine>>>> = OnceLock::new();
 static LOCAL: OnceLock<Mutex<Option<crate::local_llm::LocalWorker>>> = OnceLock::new();
 static OPENAI: OnceLock<Mutex<Option<whimpr_cleanup::OpenAiProvider>>> = OnceLock::new();
 static SETTINGS: OnceLock<Mutex<whimpr_core::Settings>> = OnceLock::new();
@@ -77,6 +77,22 @@ fn whisper_model_path() -> std::path::PathBuf {
     dir.join("ggml-base.en.bin")
 }
 
+fn log_path() -> std::path::PathBuf {
+    support_dir().join("debug.log")
+}
+
+/// Release builds run detached with no console — `eprintln!` alone reaches no one.
+/// Mirror every diagnostic into `%APPDATA%\WhimprFlow\debug.log` so a user can just
+/// open a text file after reproducing a bug instead of needing a terminal.
+fn log(msg: impl std::fmt::Display) {
+    let line = format!("[{}] {msg}", unix_now());
+    eprintln!("{line}");
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log_path()) {
+        use std::io::Write;
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -105,6 +121,21 @@ pub fn tap_live() -> bool {
 /// so this is a no-op flag reset for future fix flows.
 pub fn mark_tap_stale() {
     HOOK_LIVE.store(false, Ordering::SeqCst);
+}
+
+#[derive(Clone, serde::Serialize)]
+struct WavePayload {
+    bars: Vec<f32>,
+}
+
+fn emit_waveform(bars: &[f32]) {
+    if let Some(app) = APP.get() {
+        let _ = app.emit_to(
+            OVERLAY_LABEL,
+            "whimpr://audio/waveform",
+            WavePayload { bars: bars.to_vec() },
+        );
+    }
 }
 
 /// The foreground process's executable name (e.g. "chrome.exe"), for per-app
@@ -241,17 +272,32 @@ fn record_dictation(text: &str, duration_secs: f32, app: Option<String>) {
 
 // ── The push-to-talk pipeline ───────────────────────────────────────────────────
 
+/// Flash the pill to `state`, then settle back to idle after `after_ms` — the
+/// release build has no console (windows_subsystem = "windows" hides it), so this
+/// pill flash is the ONLY failure feedback the user can actually see.
+fn flash_bar(state: &'static str, after_ms: u64) {
+    emit_bar(state);
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(after_ms));
+        emit_bar("idle");
+    });
+}
+
 fn on_ptt_down() {
     if RECORDING.swap(true, Ordering::SeqCst) {
         return; // already recording
     }
     let _ = now_ms();
     emit_bar("recording");
-    std::thread::spawn(|| match whimpr_audio::start(|_: &[f32]| {}) {
+    std::thread::spawn(|| match whimpr_audio::start(emit_waveform) {
         Ok(handle) => {
             *CAPTURE.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(handle);
         }
-        Err(e) => eprintln!("[whimpr:win] mic capture failed: {e}"),
+        Err(e) => {
+            log(format!("mic capture failed: {e}"));
+            RECORDING.store(false, Ordering::SeqCst);
+            flash_bar("error", 900);
+        }
     });
 }
 
@@ -259,7 +305,7 @@ fn on_ptt_up() {
     if !RECORDING.swap(false, Ordering::SeqCst) {
         return; // wasn't recording
     }
-    emit_bar("idle");
+    emit_bar("transcribing");
     let app = foreground_app();
     let handle = CAPTURE.get().and_then(|slot| slot.lock().unwrap().take());
     std::thread::spawn(move || {
@@ -270,56 +316,41 @@ fn on_ptt_up() {
         // (no eprintln, no UI signal, nothing) — indistinguishable from
         // "held the key, spoke, nothing happened".
         let Some(res) = handle.and_then(|h| h.stop()) else {
-            eprintln!("[whimpr:win] no audio captured");
+            log("no audio captured");
+            flash_bar("error", 900);
             return;
         };
-        let was_real_attempt = res.duration_secs() >= 0.6;
-        let peak = res.samples.iter().fold(0f32, |m, &s| m.max(s.abs()));
-        if peak < 0.005 {
-            eprintln!("[whimpr:win] ⚠ audio is silent — the mic isn't being captured");
-            if was_real_attempt {
-                if let Some(app) = APP.get() {
-                    crate::diag::report(app, whimpr_core::InjectionFailure::NoAudioCaptured);
-                }
-            }
-            return;
-        }
-        let Some(asr) = ASR.get().cloned() else {
-            eprintln!("[whimpr:win] ASR not ready (model still loading or missing)");
-            if was_real_attempt && ASR_MODEL_MISSING.load(Ordering::SeqCst) {
-                if let Some(app) = APP.get() {
-                    crate::diag::report(app, whimpr_core::InjectionFailure::AsrUnavailable);
-                }
-            }
+        let asr = ASR.get().and_then(|m| m.lock().unwrap().clone());
+        let Some(asr) = asr else {
+            log(
+                "ASR not ready — for Local mode, is a Whisper model (e.g. ggml-base.en.bin) \
+                 present in %APPDATA%\\WhimprFlow\\models\\? For Cloud mode, is the OpenAI-slot \
+                 API key saved in Settings?",
+            );
+            flash_bar("error", 900);
             return;
         };
         let pcm = whimpr_audio::resample_to_16k(&res.samples, res.sample_rate);
         match asr.transcribe(&pcm) {
             Ok(t) => {
+                log(format!("TRANSCRIPT: \"{}\"", t.text));
                 let text = clean_transcript(&t.text);
-                if !text.is_empty() {
-                    if let Err(e) = paste_text(&text) {
-                        eprintln!("[whimpr:win] paste failed: {e}");
-                        if let Some(app) = APP.get() {
-                            crate::diag::report(app, whimpr_core::InjectionFailure::ClipboardUnavailable);
-                        }
-                    } else {
-                        crate::diag::clear_last_error();
-                    }
-                    record_dictation(&text, res.duration_secs(), app);
-                } else if was_real_attempt {
-                    if let Some(app) = APP.get() {
-                        crate::diag::report(app, whimpr_core::InjectionFailure::EmptyTranscript);
-                    }
+                if text.is_empty() {
+                    log("transcript was empty — nothing to paste");
+                    flash_bar("error", 900);
+                    return;
                 }
+                if let Err(e) = paste_text(&text) {
+                    log(format!("paste failed: {e}"));
+                    flash_bar("error", 900);
+                    return;
+                }
+                record_dictation(&text, res.duration_secs(), app);
+                flash_bar("done", 500);
             }
             Err(e) => {
-                eprintln!("[whimpr:win] ASR error: {e}");
-                if was_real_attempt {
-                    if let Some(app) = APP.get() {
-                        crate::diag::report(app, whimpr_core::InjectionFailure::AsrUnavailable);
-                    }
-                }
+                log(format!("ASR error: {e}"));
+                flash_bar("error", 900);
             }
         }
     });
@@ -359,7 +390,7 @@ fn spawn_hook_thread() {
             match SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), hinst, 0) {
                 Ok(h) => break h,
                 Err(_) => {
-                    eprintln!("[whimpr:win] failed to install keyboard hook — retrying…");
+                    log("failed to install keyboard hook — retrying…");
                     if !reported {
                         if let Some(app) = APP.get() {
                             crate::diag::report(app, whimpr_core::InjectionFailure::HotkeyTapFailed);
@@ -371,7 +402,7 @@ fn spawn_hook_thread() {
             }
         };
         if reported {
-            eprintln!("[whimpr:win] keyboard hook recovered — Right Ctrl is live now.");
+            log("keyboard hook recovered — Right Ctrl is live now.");
             crate::diag::clear_last_error();
         }
         HOOK_LIVE.store(true, Ordering::SeqCst);
@@ -384,6 +415,9 @@ fn spawn_hook_thread() {
 // ── Public surface (mirrors the macOS `hotkey::` functions the commands call) ────
 
 pub fn install(app: AppHandle) {
+    // Fresh log per run — only the latest session's diagnostics matter here.
+    let _ = std::fs::create_dir_all(support_dir());
+    let _ = std::fs::write(log_path(), b"");
     let _ = APP.set(app);
     let _ = CLOCK.set(Instant::now());
     let _ = SETTINGS.set(Mutex::new(whimpr_core::Settings::load(&settings_path())));
@@ -391,38 +425,11 @@ pub fn install(app: AppHandle) {
     let _ = STATS.set(Mutex::new(whimpr_core::StatsStore::load(&stats_path())));
     let _ = OPENAI.set(Mutex::new(None));
     let _ = LOCAL.set(Mutex::new(None));
+    let _ = ASR.set(Mutex::new(None));
     rebuild_providers();
 
-    // Load Whisper.
-    std::thread::spawn(|| {
-        let path = whisper_model_path();
-        if !path.exists() {
-            eprintln!("[whimpr:win] ASR model not found at {}", path.display());
-            ASR_MODEL_MISSING.store(true, Ordering::SeqCst);
-            return;
-        }
-        match whimpr_asr::WhisperEngine::load(&path) {
-            Ok(engine) => {
-                let _ = ASR.set(Arc::new(engine));
-                eprintln!("[whimpr:win] ASR ready");
-            }
-            Err(e) => {
-                eprintln!("[whimpr:win] ASR load failed: {e}");
-                ASR_MODEL_MISSING.store(true, Ordering::SeqCst);
-            }
-        }
-    });
-    // Start the local cleanup worker.
-    std::thread::spawn(|| {
-        if let Some(w) = crate::local_llm::spawn_default() {
-            if let Some(slot) = LOCAL.get() {
-                *slot.lock().unwrap() = Some(w);
-            }
-        }
-    });
-
     spawn_hook_thread();
-    eprintln!("[whimpr:win] keyboard hook installed (push-to-talk: Right Ctrl)");
+    log("keyboard hook installed (push-to-talk: Right Ctrl)");
 }
 
 pub fn current_settings() -> whimpr_core::Settings {
@@ -447,8 +454,8 @@ pub fn trigger_hands_free() {}
 
 pub fn rebuild_providers() {
     let settings = current_settings_inner();
-    let model = settings.openai_model;
-    let base_url = settings.openai_base_url;
+    let model = settings.openai_model.clone();
+    let base_url = settings.openai_base_url.clone();
     let key = keyring::Entry::new("com.whimpr.whimprflow", "openai_api_key")
         .ok()
         .and_then(|e| e.get_password().ok())
@@ -457,6 +464,76 @@ pub fn rebuild_providers() {
         *slot.lock().unwrap() = key.map(|k| {
             whimpr_cleanup::OpenAiProvider::with_base_url(k, model, Some(base_url))
         });
+    }
+    sync_local_worker(settings.cleanup_mode);
+    rebuild_asr(&settings);
+}
+
+/// (Re)build the speech-to-text engine to match the current ASR mode. Cloud is
+/// built synchronously (just an HTTP client, no load time); local Whisper loads
+/// off-thread since parsing the GGUF model takes ~1s.
+fn rebuild_asr(settings: &whimpr_core::Settings) {
+    match settings.asr_mode {
+        whimpr_core::AsrMode::Cloud => {
+            let key = keyring::Entry::new("com.whimpr.whimprflow", "openai_api_key")
+                .ok()
+                .and_then(|e| e.get_password().ok())
+                .filter(|k| !k.trim().is_empty());
+            let Some(key) = key else {
+                log(
+                    "ASR: cloud mode selected but no OpenAI-slot API key is saved (cloud ASR \
+                     reuses the OpenAI API key field in Settings)",
+                );
+                return;
+            };
+            let model = settings.asr_model.clone();
+            log(format!(
+                "ASR: cloud mode, model={model}, base_url={:?}",
+                settings.asr_base_url
+            ));
+            let engine: Arc<dyn AsrEngine> = Arc::new(whimpr_cleanup::CloudAsr::with_base_url(
+                key,
+                model,
+                Some(settings.asr_base_url.clone()),
+            ));
+            if let Some(slot) = ASR.get() {
+                *slot.lock().unwrap() = Some(engine);
+            }
+            log("ASR ready (cloud)");
+        }
+        whimpr_core::AsrMode::Local => {
+            std::thread::spawn(|| match whimpr_asr::WhisperEngine::load(&whisper_model_path()) {
+                Ok(engine) => {
+                    let engine: Arc<dyn AsrEngine> = Arc::new(engine);
+                    if let Some(slot) = ASR.get() {
+                        *slot.lock().unwrap() = Some(engine);
+                    }
+                    log("ASR ready (local)");
+                }
+                Err(e) => log(format!("ASR load failed: {e}")),
+            });
+        }
+    }
+}
+
+/// Start (or stop) the local llama.cpp cleanup worker to match the current
+/// cleanup mode — it's only worth the RAM/CPU when `Local` is actually selected.
+/// Spawning happens off-thread since the worker process takes a few seconds to
+/// load its model; stopping just drops the child (see `LocalWorker`'s `Drop`).
+fn sync_local_worker(mode: CleanupMode) {
+    let Some(slot) = LOCAL.get() else { return };
+    if matches!(mode, CleanupMode::Local) {
+        if slot.lock().unwrap().is_none() {
+            std::thread::spawn(|| {
+                if let Some(w) = crate::local_llm::spawn_default() {
+                    if let Some(slot) = LOCAL.get() {
+                        *slot.lock().unwrap() = Some(w);
+                    }
+                }
+            });
+        }
+    } else {
+        *slot.lock().unwrap() = None;
     }
 }
 

@@ -3,8 +3,7 @@
 //! Runs as a macOS accessory (menu-bar) app: a tray item, a transparent
 //! always-on-top Flow Bar overlay, and a hidden Hub window. This is the M0
 //! skeleton — the sidecar supervisor, real state-machine bridge, and native
-//! panel promotion arrive in later milestones. The overlay already listens for
-//! `whimpr://flowbar/state`, so the tray demo items prove the event pipeline.
+//! panel promotion arrive in later milestones.
 
 mod appctx;
 mod autolearn;
@@ -20,7 +19,7 @@ use serde::Serialize;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
-    Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
 
 const OVERLAY_LABEL: &str = "whimpr_bar";
@@ -503,7 +502,6 @@ pub fn emit_flowbar_state(app: &tauri::AppHandle, state: &'static str) {
     }
 }
 
-
 #[tauri::command]
 fn get_settings() -> whimpr_core::Settings {
     hotkey::current_settings()
@@ -764,22 +762,42 @@ fn apply_hands_free_shortcut(app: &tauri::AppHandle) {
     }
 }
 
+/// Show and focus the Hub window, whether it's hidden (closed via the X button,
+/// which we intercept below) or just needs to come to the front.
+fn show_hub(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window(HUB_LABEL) {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(
-            // The customizable hands-free hotkey lives here — the OS registers the
-            // chord, so pressing it fires our handler AND is suppressed from the
-            // focused app (a listen-only CGEvent tap could not consume a printable
-            // key like Space). Only the hands-free shortcut is ever registered, so
-            // any Pressed event is a hands-free toggle.
-            tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|_app, _shortcut, event| {
-                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                        hotkey::trigger_hands_free();
-                    }
-                })
-                .build(),
-        )
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default().plugin(
+        // The customizable hands-free hotkey lives here — the OS registers the
+        // chord, so pressing it fires our handler AND is suppressed from the
+        // focused app (a listen-only CGEvent tap could not consume a printable
+        // key like Space). Only the hands-free shortcut is ever registered, so
+        // any Pressed event is a hands-free toggle.
+        tauri_plugin_global_shortcut::Builder::new()
+            .with_handler(|_app, _shortcut, event| {
+                if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                    hotkey::trigger_hands_free();
+                }
+            })
+            .build(),
+    );
+    // Relaunching the app (double-clicking the exe/installer shortcut again) must
+    // not spawn a second process — it should just surface the running one. Without
+    // this, every relaunch left a new instance in the taskbar. macOS's Dock already
+    // re-activates the existing instance, so this is Windows/Linux-only.
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_hub(app);
+        }));
+    }
+    builder
         .invoke_handler(tauri::generate_handler![
             get_settings,
             set_settings,
@@ -825,6 +843,20 @@ pub fn run() {
             let hub = build_hub(app)?;
             let _ = hub.show();
             let _ = hub.set_focus();
+            // Closing the Hub via the X button should hide it (dictation keeps
+            // running from the tray), not destroy the window — otherwise "Open
+            // WhimprFlow" in the tray has nothing left to show.
+            hub.on_window_event({
+                let app = app.handle().clone();
+                move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        if let Some(w) = app.get_webview_window(HUB_LABEL) {
+                            let _ = w.hide();
+                        }
+                    }
+                }
+            });
 
             // Wire the Fn key to the pill via the real state machine. This also
             // loads settings.json, so the pill can be placed from here on.
@@ -865,23 +897,15 @@ pub fn run() {
             }
 
             let open = MenuItem::with_id(app, "open", "Open WhimprFlow", true, None::<&str>)?;
-            let demo_rec =
-                MenuItem::with_id(app, "demo_rec", "Demo: recording", true, None::<&str>)?;
-            let demo_idle = MenuItem::with_id(app, "demo_idle", "Demo: idle", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
             let quit = MenuItem::with_id(app, "quit", "Quit WhimprFlow", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &demo_rec, &demo_idle, &sep, &quit])?;
+            let menu = Menu::with_items(app, &[&open, &sep, &quit])?;
 
             let mut tray = TrayIconBuilder::new()
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "open" => {
-                        if let Some(w) = app.get_webview_window(HUB_LABEL) {
-                            let _ = w.show();
-                            let _ = w.set_focus();
-                        }
-                    }
+                    "open" => show_hub(app),
                     "demo_rec" => emit_flowbar_state(app, "recording"),
                     "demo_idle" => emit_flowbar_state(app, "idle"),
                     "quit" => app.exit(0),
