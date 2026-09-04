@@ -193,9 +193,9 @@ mod tests {
     }
 
     #[test]
-    fn asr_unavailable_points_at_models_md() {
+    fn asr_unavailable_mentions_download() {
         let d = InjectionFailure::AsrUnavailable.diagnose(Platform::MacOs);
-        assert!(d.detail.contains("MODELS.md"));
+        assert!(d.detail.contains("ggml-base.en.bin"));
     }
 
     #[test]
