@@ -458,8 +458,7 @@ fn build_overlay(app: &tauri::App) -> tauri::Result<WebviewWindow> {
     .visible(false)
     .build()?;
 
-    // Show the overlay on every macOS Space, not just the one it was created on.
-    // Without this, switching desktops loses the pill until you switch back.
+    // Show the overlay on every macOS Space and over full-screen apps.
     #[cfg(target_os = "macos")]
     {
         use objc2_app_kit::NSWindow;
@@ -467,10 +466,13 @@ fn build_overlay(app: &tauri::App) -> tauri::Result<WebviewWindow> {
             // Safety: ns_window() returns a valid NSWindow pointer on macOS.
             let ns_window: &NSWindow = unsafe { &*(ns_ptr as *const NSWindow) };
             // CanJoinAllSpaces (1 << 0) | FullScreenAuxiliary (1 << 8)
-            // FullScreenAuxiliary keeps it visible over full-screen apps too.
             ns_window.setCollectionBehavior(
                 objc2_app_kit::NSWindowCollectionBehavior(1 | (1 << 8)),
             );
+            // NSStatusWindowLevel (25) floats above full-screen apps.
+            // Tauri's always_on_top uses NSFloatingWindowLevel (3), which
+            // sits below full-screen windows.
+            ns_window.setLevel(25);
         }
     }
 
@@ -928,8 +930,16 @@ pub fn run() {
                     "quit" => app.exit(0),
                     _ => {}
                 });
-            if let Some(icon) = app.default_window_icon().cloned() {
-                tray = tray.icon(icon);
+            // Use the monochrome tray.png for the menu bar (template image).
+            // Falls back to the app icon if tray.png is missing.
+            let tray_icon = tauri::image::Image::from_path("icons/tray.png")
+                .or_else(|_| tauri::image::Image::from_path(
+                    app.path().resource_dir().unwrap_or_default().join("icons/tray.png")
+                ))
+                .ok()
+                .or_else(|| app.default_window_icon().cloned());
+            if let Some(icon) = tray_icon {
+                tray = tray.icon(icon).icon_as_template(true);
             }
             tray.build(app)?;
 

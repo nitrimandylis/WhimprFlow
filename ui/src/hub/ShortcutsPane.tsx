@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { font } from "../tokens/values";
 import { theme } from "./theme";
 import { Button, Card, PageTitle } from "./ui";
+import { DEFAULT_KEYBINDINGS } from "./api";
 import type { ChordJson, KeyBindings, KeyJson, Settings } from "./api";
 
 const ACTION_ORDER: (keyof KeyBindings)[] = ["cancel", "paste_last", "copy_last", "undo_last"];
@@ -184,8 +185,11 @@ function BindingRow({
 export function ShortcutsPane({ settings, onChange }: { settings: Settings; onChange: (s: Settings) => void }) {
   const [recordingName, setRecordingName] = useState<keyof KeyBindings | null>(null);
 
+  // Guard: keybindings may be missing if the backend doesn't have the field yet.
+  const kb: KeyBindings = settings.keybindings ?? DEFAULT_KEYBINDINGS;
+
   const saveBinding = (name: keyof KeyBindings, chord: ChordJson) => {
-    onChange({ ...settings, keybindings: { ...settings.keybindings, [name]: chord } });
+    onChange({ ...settings, keybindings: { ...kb, [name]: chord } });
   };
 
   return (
@@ -228,8 +232,8 @@ export function ShortcutsPane({ settings, onChange }: { settings: Settings; onCh
               {i > 0 && <div style={{ borderTop: `1px solid ${theme.border}` }} />}
               <BindingRow
                 name={name}
-                chord={settings.keybindings[name]}
-                keybindings={settings.keybindings}
+                chord={kb[name]}
+                keybindings={kb}
                 recording={recordingName === name}
                 onStartRecording={() => setRecordingName(name)}
                 onStopRecording={() => setRecordingName(null)}

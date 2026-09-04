@@ -458,16 +458,18 @@ export function FlowBar() {
         paddingBottom: 4,
         fontFamily: font.ui,
         userSelect: "none",
-      }}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => {
-        setHover(false);
-        setTip(null);
+        // Pointer events only on children, not the invisible overlay area.
+        pointerEvents: "none",
       }}
     >
       <div
         aria-label={`WhimprFlow ${state}${isError && errorText ? `: ${errorText.detail}` : ""}`}
         title={isError ? errorText?.detail : isIdle ? "Click to dictate · hold to move" : "Hold to move"}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => {
+          setHover(false);
+          setTip(null);
+        }}
         // A quick click and a drag both begin with mousedown, and the native
         // drag takes over the mouse the moment it starts — so the two are told
         // apart by time: release within 180ms is a click, keep holding and it
@@ -509,6 +511,7 @@ export function FlowBar() {
           overflow: "hidden",
           fontSize: 13,
           cursor: "pointer",
+          pointerEvents: "auto",
         }}
       >
         {isIdle ? (
@@ -571,7 +574,7 @@ export function FlowBar() {
 
       {/* Added below the capsule on hover — the capsule stays put. */}
       {showActions && (
-        <div style={{ display: "flex", alignItems: "center", gap: 11, marginTop: 9 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 11, marginTop: 9, pointerEvents: "auto" }}>
           <RoundButton
             title="Language"
             onEnter={() => setTip({ label: "Language", hint: langLabel(language) })}
