@@ -3,7 +3,7 @@
 //! Keeping every side-effect-free input in one enum lets the machine be a pure
 //! `step(input) -> Vec<Action>` function that unit-tests without a mic or a hook.
 
-use whimpr_ipc::BindingId;
+use crate::types::BindingId;
 
 use crate::types::SessionId;
 

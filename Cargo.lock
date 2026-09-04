@@ -5311,16 +5311,6 @@ dependencies = [
  "strsim",
  "thiserror 1.0.69",
  "tracing",
- "whimpr-ipc",
-]
-
-[[package]]
-name = "whimpr-ipc"
-version = "0.1.1"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -5332,10 +5322,6 @@ dependencies = [
  "serde",
  "serde_json",
 ]
-
-[[package]]
-name = "whimpr-sidecar"
-version = "0.1.1"
 
 [[package]]
 name = "whimpr-tauri"
@@ -5362,7 +5348,6 @@ dependencies = [
  "whimpr-audio",
  "whimpr-cleanup",
  "whimpr-core",
- "whimpr-ipc",
  "windows 0.58.0",
 ]
 

@@ -3,13 +3,11 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/whimpr-ipc",
     "crates/whimpr-core",
     "crates/whimpr-audio",
     "crates/whimpr-asr",
     "crates/whimpr-cleanup",
     "crates/whimpr-llm-worker",
-    "crates/whimpr-sidecar",
     "src-tauri",
 ]
 

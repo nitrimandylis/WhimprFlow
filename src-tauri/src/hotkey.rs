@@ -1,15 +1,10 @@
-//! Hold-Fn → pill wiring for the demo shell.
+//! macOS dictation pipeline: hotkey hook, ASR, cleanup, and paste.
 //!
-//! This installs an in-process CoreGraphics event tap that feeds Fn key-down /
-//! key-up into the real [`whimpr_core`] dictation state machine, and turns the
-//! machine's actions into `whimpr://flowbar/state` events the overlay pill
-//! renders. There is no audio or ASR yet, so a finalized session is simulated as
-//! completing shortly after key release — enough to see the full
-//! recording → transcribing → done → idle loop driven by the actual state machine.
-//!
-//! In the shipping product this hook lives in a separate sidecar process (so heavy
-//! inference can't stall it); running it in-process is an acceptable macOS-only
-//! path for this demo and the early milestones.
+//! Installs an in-process CoreGraphics event tap that feeds Fn key-down/key-up
+//! into the [`whimpr_core::StateMachine`]. The machine's actions drive mic
+//! capture, on-device or cloud Whisper transcription, LLM cleanup (local/OpenAI/
+//! Anthropic), and clipboard-relay paste at the cursor. State transitions emit
+//! `whimpr://flowbar/state` events so the overlay pill stays in sync.
 
 /// Dictionary entry shape sent to the Hub UI (auto-learned entries flagged).
 #[derive(Clone, serde::Serialize)]
@@ -36,7 +31,7 @@ mod imp {
         AsrEngine, CleanupContext, CleanupMode, CleanupProvider, Input, PipelineEvent, StateMachine,
         TriggerToken,
     };
-    use whimpr_ipc::BindingId;
+    use whimpr_core::BindingId;
 
     const OVERLAY_LABEL: &str = "whimpr_bar";
 

@@ -14,7 +14,6 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 whimpr-core = { path = "../crates/whimpr-core" }
-whimpr-ipc = { path = "../crates/whimpr-ipc" }
 whimpr-audio = { path = "../crates/whimpr-audio" }
 whimpr-asr = { path = "../crates/whimpr-asr" }
 whimpr-cleanup = { path = "../crates/whimpr-cleanup" }

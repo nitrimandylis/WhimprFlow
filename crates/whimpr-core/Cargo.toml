@@ -9,7 +9,6 @@ license.workspace = true
 # orchestration, ASR/cleanup trait seams, dictionary, settings, storage. The native
 # and ML backends plug in behind traits defined here.
 [dependencies]
-whimpr-ipc = { path = "../whimpr-ipc" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }

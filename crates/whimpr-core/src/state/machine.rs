@@ -5,7 +5,7 @@
 //! whole hold / double-tap-lock / cancel / cooldown / session-cap behavior is
 //! deterministic and unit-testable.
 
-use whimpr_ipc::BindingId;
+use crate::types::BindingId;
 
 use super::actions::{Action, BarState};
 use super::events::{Input, PipelineEvent, TriggerToken};
