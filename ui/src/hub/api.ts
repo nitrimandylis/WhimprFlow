@@ -336,6 +336,31 @@ export async function restartApp(): Promise<void> {
   }
 }
 
+// ── Model download ──────────────────────────────────────────────────────────
+export async function checkModelStatus(): Promise<boolean> {
+  try {
+    return await invoke<boolean>("check_model_status");
+  } catch {
+    return true; // browser preview: assume model exists
+  }
+}
+
+export async function downloadModel(): Promise<void> {
+  try {
+    await invoke<void>("download_model");
+  } catch {
+    /* browser preview */
+  }
+}
+
+export async function onModelProgress(cb: (p: { percent: number }) => void): Promise<() => void> {
+  return listenEvent<{ percent: number }>("whimpr://model/progress", cb);
+}
+
+export async function onModelDone(cb: (p: { ok: boolean; error?: string }) => void): Promise<() => void> {
+  return listenEvent<{ ok: boolean; error?: string }>("whimpr://model/done", cb);
+}
+
 /// Persist a pill position the user dragged to (physical px, window top-left).
 export async function setPillPosition(x: number, y: number): Promise<void> {
   try {

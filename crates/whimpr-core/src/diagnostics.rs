@@ -119,9 +119,10 @@ impl InjectionFailure {
             },
             (AsrUnavailable, _) => Diagnostic {
                 headline: "Speech model not found".into(),
-                detail: "No Whisper model is installed. Download a ggml-base.en.bin model (see \
-                    MODELS.md in the repo, or huggingface.co/ggerganov/whisper.cpp) into the \
-                    models folder, then relaunch."
+                detail: "No Whisper model is installed. Download ggml-base.en.bin from \
+                    huggingface.co/ggerganov/whisper.cpp and place it in \
+                    ~/Library/Application Support/WhimprFlow/models/. \
+                    Or switch to Cloud ASR in Settings to use a remote Whisper endpoint."
                     .into(),
             },
         }

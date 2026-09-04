@@ -1,9 +1,8 @@
 //! WhimprFlow Tauri shell.
 //!
-//! Runs as a macOS accessory (menu-bar) app: a tray item, a transparent
-//! always-on-top Flow Bar overlay, and a hidden Hub window. This is the M0
-//! skeleton — the sidecar supervisor, real state-machine bridge, and native
-//! panel promotion arrive in later milestones.
+//! Runs as a macOS menu-bar app: a tray item, a transparent always-on-top
+//! Flow Bar overlay, and a hidden Hub window for settings, dictionary,
+//! insights, and history.
 
 mod appctx;
 mod autolearn;
@@ -632,6 +631,89 @@ fn copy_to_clipboard(text: String) -> Result<(), String> {
     cb.set_text(text).map_err(|e| e.to_string())
 }
 
+// ── Model download ──────────────────────────────────────────────────────────
+/// Whether the speech model exists on disk. The frontend shows a download
+/// step in onboarding when this returns false.
+#[tauri::command]
+fn check_model_status() -> bool {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let dir = std::path::PathBuf::from(home).join("Library/Application Support/WhimprFlow/models");
+    // Same priority list as hotkey.rs's model_path().
+    ["ggml-large-v3-turbo.bin", "ggml-medium.en.bin", "ggml-small.en.bin", "ggml-base.en.bin"]
+        .iter()
+        .any(|name| dir.join(name).exists())
+}
+
+/// Download the default Whisper model (ggml-base.en.bin, ~148 MB). Emits
+/// `whimpr://model/progress` events with { percent: u8 } so the UI can
+/// show a progress bar. Runs on a background thread; returns immediately.
+#[tauri::command]
+fn download_model(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let dir = std::path::PathBuf::from(home)
+            .join("Library/Application Support/WhimprFlow/models");
+        let _ = std::fs::create_dir_all(&dir);
+        let dest = dir.join("ggml-base.en.bin");
+        if dest.exists() {
+            let _ = app.emit("whimpr://model/progress", serde_json::json!({ "percent": 100 }));
+            let _ = app.emit("whimpr://model/done", serde_json::json!({ "ok": true }));
+            return;
+        }
+
+        let url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
+        let tmp = dest.with_extension("bin.partial");
+        match download_with_progress(url, &tmp, &app) {
+            Ok(()) => {
+                if let Err(e) = std::fs::rename(&tmp, &dest) {
+                    eprintln!("[whimpr] model rename failed: {e}");
+                    let _ = app.emit("whimpr://model/done", serde_json::json!({ "ok": false, "error": e.to_string() }));
+                    return;
+                }
+                let _ = app.emit("whimpr://model/done", serde_json::json!({ "ok": true }));
+                // Reload ASR now that the model exists.
+                hotkey::rebuild_asr(&hotkey::current_settings());
+            }
+            Err(e) => {
+                eprintln!("[whimpr] model download failed: {e}");
+                let _ = std::fs::remove_file(&tmp);
+                let _ = app.emit("whimpr://model/done", serde_json::json!({ "ok": false, "error": e.to_string() }));
+            }
+        }
+    });
+}
+
+fn download_with_progress(
+    url: &str,
+    dest: &std::path::Path,
+    app: &tauri::AppHandle,
+) -> anyhow::Result<()> {
+    use std::io::Write;
+    let resp = reqwest::blocking::get(url)?;
+    let total = resp.content_length().unwrap_or(0);
+    let mut file = std::fs::File::create(dest)?;
+    let mut downloaded: u64 = 0;
+    let mut last_pct: u8 = 0;
+    let mut reader = resp;
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = std::io::Read::read(&mut reader, &mut buf)?;
+        if n == 0 { break; }
+        file.write_all(&buf[..n])?;
+        downloaded += n as u64;
+        if total > 0 {
+            let pct = ((downloaded * 100) / total).min(99) as u8;
+            if pct != last_pct {
+                last_pct = pct;
+                let _ = app.emit("whimpr://model/progress", serde_json::json!({ "percent": pct }));
+            }
+        }
+    }
+    file.flush()?;
+    let _ = app.emit("whimpr://model/progress", serde_json::json!({ "percent": 100 }));
+    Ok(())
+}
+
 /// Dictionary entries for the Hub Dictionary screen.
 #[tauri::command]
 fn get_dictionary() -> Vec<hotkey::DictEntryDto> {
@@ -883,6 +965,8 @@ pub fn run() {
             pill_start,
             set_pill_position,
             reset_pill_position,
+            check_model_status,
+            download_model,
             get_dictionary,
             add_dictionary_entry,
             remove_dictionary_entry,

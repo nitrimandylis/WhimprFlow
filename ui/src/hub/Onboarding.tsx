@@ -7,6 +7,10 @@ import {
   requestMicrophone,
   requestInputMonitoring,
   restartApp,
+  checkModelStatus,
+  downloadModel,
+  onModelProgress,
+  onModelDone,
   type Status,
 } from "./api";
 
@@ -98,6 +102,117 @@ function Step({
           }}
         >
           Grant
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ModelStep({ n, locked }: { n: number; locked: boolean }) {
+  const [hasModel, setHasModel] = useState<boolean | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  const [percent, setPercent] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void checkModelStatus().then(setHasModel);
+  }, []);
+
+  useEffect(() => {
+    if (!downloading) return;
+    let stop1: (() => void) | undefined;
+    let stop2: (() => void) | undefined;
+    void onModelProgress((p) => setPercent(p.percent)).then((u) => (stop1 = u));
+    void onModelDone((p) => {
+      setDownloading(false);
+      if (p.ok) {
+        setHasModel(true);
+        setPercent(100);
+      } else {
+        setError(p.error ?? "Download failed");
+      }
+    }).then((u) => (stop2 = u));
+    return () => { stop1?.(); stop2?.(); };
+  }, [downloading]);
+
+  const done = hasModel === true;
+  const active = !done && !locked;
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 16,
+        padding: "16px 18px",
+        borderRadius: 14,
+        marginBottom: 12,
+        background: active ? theme.accentSoft : theme.cardBg,
+        border: `1px solid ${active ? theme.accentSoftBorder : theme.border}`,
+        boxShadow: theme.shadowSoft,
+        opacity: locked ? 0.5 : 1,
+      }}
+    >
+      <div
+        style={{
+          flex: "0 0 auto",
+          width: 30,
+          height: 30,
+          borderRadius: 9999,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontWeight: 700,
+          fontSize: 14,
+          color: done ? "#fff" : theme.textMuted,
+          background: done ? theme.accentDeep : theme.track,
+        }}
+      >
+        {done ? "✓" : n}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 15, fontWeight: 600, color: theme.textStrong }}>
+          Speech Model{" "}
+          <span style={{ fontSize: 12, color: theme.textFaint, fontWeight: 400 }}>· required for local ASR</span>
+        </div>
+        <div style={{ fontSize: 13, color: theme.textMuted, marginTop: 2 }}>
+          {downloading
+            ? `Downloading ggml-base.en.bin... ${percent}%`
+            : error
+              ? error
+              : "Downloads a 148 MB speech model for on-device transcription."}
+        </div>
+        {downloading && (
+          <div style={{ marginTop: 6, height: 4, borderRadius: 2, background: theme.track, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${percent}%`, background: theme.accentDeep, borderRadius: 2, transition: "width 200ms ease" }} />
+          </div>
+        )}
+      </div>
+      {done ? (
+        <span style={{ color: theme.accentDeep, fontSize: 13, fontWeight: 600 }}>Installed</span>
+      ) : (
+        <button
+          onClick={() => {
+            setError(null);
+            setDownloading(true);
+            setPercent(0);
+            void downloadModel();
+          }}
+          disabled={locked || downloading}
+          style={{
+            cursor: locked || downloading ? "default" : "pointer",
+            border: "none",
+            borderRadius: 10,
+            padding: "9px 16px",
+            fontSize: 13,
+            fontWeight: 600,
+            fontFamily: font.ui,
+            color: "#fff",
+            background: locked || downloading ? theme.textFaint : palette.slate900,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {downloading ? `${percent}%` : error ? "Retry" : "Download"}
         </button>
       )}
     </div>
@@ -252,8 +367,9 @@ export function Onboarding({
           required
           onGrant={() => requestMicrophone()}
         />
+        <ModelStep n={3} locked={!(acc && mic)} />
         <Step
-          n={3}
+          n={4}
           title="Input Monitoring"
           detail="Extra reliability for key detection. Optional — you can enter without it."
           done={inp}

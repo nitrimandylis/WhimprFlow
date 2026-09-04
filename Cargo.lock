@@ -5336,6 +5336,7 @@ dependencies = [
  "objc2-app-kit",
  "objc2-av-foundation",
  "objc2-foundation",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "strsim",
