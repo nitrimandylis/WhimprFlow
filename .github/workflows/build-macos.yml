@@ -1,0 +1,61 @@
+name: Build macOS
+
+on:
+  push:
+    branches: [nick/polished]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install CMake
+        run: brew install cmake
+
+      - name: Install frontend deps
+        working-directory: ui
+        run: pnpm install --frozen-lockfile || pnpm install
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Build app + DMG
+        # cargo tauri build runs beforeBuildCommand (pnpm build),
+        # compiles Rust, and bundles .app + .dmg per tauri.conf.json
+        run: cargo tauri build --target aarch64-apple-darwin 2>&1 | tail -50
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: WhimprFlow-macOS-arm64
+          path: target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: warn
+
+      - name: Upload .app fallback
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: WhimprFlow-app-bundle
+          path: target/aarch64-apple-darwin/release/bundle/macos/*.app
+          if-no-files-found: warn
