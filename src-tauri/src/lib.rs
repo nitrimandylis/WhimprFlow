@@ -19,7 +19,7 @@ use serde::Serialize;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
-    Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
 
 const OVERLAY_LABEL: &str = "whimpr_bar";
@@ -464,14 +464,13 @@ fn build_overlay(app: &tauri::App) -> tauri::Result<WebviewWindow> {
     {
         use objc2_app_kit::NSWindow;
         if let Ok(ns_ptr) = overlay.ns_window() {
+            // Safety: ns_window() returns a valid NSWindow pointer on macOS.
             let ns_window: &NSWindow = unsafe { &*(ns_ptr as *const NSWindow) };
-            unsafe {
-                // CanJoinAllSpaces (1 << 0) | FullScreenAuxiliary (1 << 8)
-                // FullScreenAuxiliary keeps it visible over full-screen apps too.
-                ns_window.setCollectionBehavior(
-                    objc2_app_kit::NSWindowCollectionBehavior(1 | (1 << 8)),
-                );
-            }
+            // CanJoinAllSpaces (1 << 0) | FullScreenAuxiliary (1 << 8)
+            // FullScreenAuxiliary keeps it visible over full-screen apps too.
+            ns_window.setCollectionBehavior(
+                objc2_app_kit::NSWindowCollectionBehavior(1 | (1 << 8)),
+            );
         }
     }
 
