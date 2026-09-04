@@ -433,6 +433,7 @@ pub fn update_settings(new: whimpr_core::Settings) {
 /// are wired on macOS (Publik Test 2); a Windows equivalent is separate work.
 pub fn stop_dictation() {}
 pub fn cancel_dictation() {}
+pub fn trigger_hands_free() {}
 
 pub fn rebuild_providers() {
     let settings = current_settings_inner();

@@ -14,6 +14,10 @@ export interface Settings {
   openai_base_url: string;
   anthropic_model: string;
   sound_on_start: boolean;
+  // Tauri accelerator that toggles hands-free (locked) dictation — press once to
+  // start talking with no key held, again to stop. Default "CmdOrCtrl+Shift+Space".
+  // Empty disables it. (Holding Fn and double-tapping Fn always work too.)
+  hands_free_hotkey: string;
 }
 
 // Mirrors `permissions::Grant` in src-tauri. A bare boolean couldn't tell
@@ -82,6 +86,7 @@ export const DEFAULT_SETTINGS: Settings = {
   openai_base_url: "",
   anthropic_model: "claude-haiku-4-5",
   sound_on_start: true,
+  hands_free_hotkey: "CmdOrCtrl+Shift+Space",
 };
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {

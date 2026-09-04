@@ -36,6 +36,23 @@ pub struct Settings {
     pub anthropic_model: String,
     /// Play the record-start ping.
     pub sound_on_start: bool,
+    /// The global hotkey that toggles HANDS-FREE (locked) dictation — press once
+    /// to start talking, press again to stop, with no key held down. An
+    /// accelerator string in Tauri's format (e.g. "CmdOrCtrl+Shift+Space", the
+    /// default). This is the "speak without holding fn … a combination of
+    /// buttons … customization in settings" ask from Publik Test 2. Holding Fn
+    /// (push-to-talk) and double-tapping Fn (hands-free) still work regardless.
+    /// An empty string disables the hands-free hotkey.
+    #[serde(default = "default_hands_free_hotkey")]
+    pub hands_free_hotkey: String,
+}
+
+/// The out-of-the-box hands-free hotkey. Chosen to match what the cofounder
+/// already expected to work ("command-shift space for the hands-off
+/// transcribing") and to stay clear of the common macOS system shortcuts
+/// (Cmd+Space is Spotlight, Ctrl+Cmd+Space is the emoji picker).
+pub fn default_hands_free_hotkey() -> String {
+    "CmdOrCtrl+Shift+Space".to_string()
 }
 
 impl Default for Settings {
@@ -47,6 +64,7 @@ impl Default for Settings {
             openai_base_url: String::new(),
             anthropic_model: "claude-haiku-4-5".to_string(),
             sound_on_start: true,
+            hands_free_hotkey: default_hands_free_hotkey(),
         }
     }
 }
@@ -87,5 +105,29 @@ mod tests {
         let json = serde_json::to_string(&s).unwrap();
         let back: Settings = serde_json::from_str(&json).unwrap();
         assert_eq!(back.cleanup_mode, CleanupMode::Local);
+    }
+
+    #[test]
+    fn hands_free_hotkey_defaults_and_survives_old_settings() {
+        // A fresh install gets the Cmd+Shift+Space default.
+        assert_eq!(Settings::default().hands_free_hotkey, "CmdOrCtrl+Shift+Space");
+
+        // Settings written by a build BEFORE this field existed must still load —
+        // the field is `#[serde(default)]`, so it fills in rather than failing.
+        let old_json = r#"{
+            "cleanup_mode": "local",
+            "cleanup_level": "light",
+            "openai_model": "gpt-4o-mini",
+            "anthropic_model": "claude-haiku-4-5",
+            "sound_on_start": true
+        }"#;
+        let loaded: Settings = serde_json::from_str(old_json).unwrap();
+        assert_eq!(loaded.hands_free_hotkey, "CmdOrCtrl+Shift+Space");
+
+        // A user who set their own combo keeps it.
+        let mut custom = Settings::default();
+        custom.hands_free_hotkey = "Alt+Space".to_string();
+        let back: Settings = serde_json::from_str(&serde_json::to_string(&custom).unwrap()).unwrap();
+        assert_eq!(back.hands_free_hotkey, "Alt+Space");
     }
 }

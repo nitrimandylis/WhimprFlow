@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { font } from "../tokens/values";
 import { theme } from "./theme";
 import { Button, Card, Dot, PageTitle, Segmented } from "./ui";
@@ -33,6 +33,110 @@ function SectionTitle({ children, sub }: { children: React.ReactNode; sub?: stri
       <div style={{ fontSize: 15, fontWeight: 600, color: theme.textStrong }}>{children}</div>
       {sub && <div style={{ color: theme.textMuted, fontSize: 13, marginTop: 4 }}>{sub}</div>}
     </div>
+  );
+}
+
+// A physical key from a KeyboardEvent.code, as a Tauri accelerator key name.
+// Returns null for a bare modifier press (so the recorder keeps listening) and
+// for keys we don't want to bind.
+function keyNameFromCode(code: string): string | null {
+  if (code === "Space") return "Space";
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+  if (/^F[0-9]{1,2}$/.test(code)) return code;
+  return null;
+}
+
+// A KeyboardEvent → a Tauri accelerator string ("CmdOrCtrl+Shift+Space"), or
+// null if it isn't a valid global shortcut yet (no non-modifier key, or no
+// modifier — a bare key makes a terrible global hotkey).
+function acceleratorFromEvent(e: KeyboardEvent): string | null {
+  const key = keyNameFromCode(e.code);
+  if (!key) return null;
+  const parts: string[] = [];
+  if (e.metaKey) parts.push("CmdOrCtrl");
+  if (e.ctrlKey) parts.push("Ctrl");
+  if (e.altKey) parts.push("Alt");
+  if (e.shiftKey) parts.push("Shift");
+  if (parts.length === 0) return null;
+  parts.push(key);
+  return parts.join("+");
+}
+
+const ACCELERATOR_SYMBOLS: Record<string, string> = {
+  CmdOrCtrl: "⌘",
+  Cmd: "⌘",
+  Command: "⌘",
+  Super: "⌘",
+  Ctrl: "⌃",
+  Control: "⌃",
+  Alt: "⌥",
+  Option: "⌥",
+  Shift: "⇧",
+};
+
+function prettyAccelerator(accelerator: string): string {
+  if (!accelerator.trim()) return "Off";
+  return accelerator
+    .split("+")
+    .map((part) => ACCELERATOR_SYMBOLS[part] ?? part)
+    .join(" ");
+}
+
+// "Speak without having to hold down fn … a combination of buttons … with
+// customization in settings" (Publik Test 2). Click to record a new shortcut;
+// the next modifier+key you press becomes it. Esc while recording cancels.
+function HandsFreeHotkeyRow({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (accelerator: string) => void;
+}) {
+  const [recording, setRecording] = useState(false);
+
+  useEffect(() => {
+    if (!recording) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") {
+        setRecording(false);
+        return;
+      }
+      const accelerator = acceleratorFromEvent(e);
+      if (accelerator) {
+        onChange(accelerator);
+        setRecording(false);
+      }
+      // Otherwise a bare modifier is still held — keep listening for the key.
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [recording, onChange]);
+
+  return (
+    <Card style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: theme.textStrong }}>
+            Hands-free shortcut
+          </div>
+          <div style={{ color: theme.textMuted, fontSize: 13, marginTop: 4 }}>
+            Press it once to start talking with no key held, again to stop. Holding Fn
+            (push-to-talk) and double-tapping Fn still work too.
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "0 0 auto" }}>
+          <Button onClick={() => setRecording((on) => !on)}>
+            {recording ? "Press keys…" : prettyAccelerator(value)}
+          </Button>
+          {value.trim() !== "" && !recording && (
+            <Button onClick={() => onChange("")}>Off</Button>
+          )}
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -254,6 +358,11 @@ export function SettingsPane({
           />
         </div>
       </Card>
+
+      <HandsFreeHotkeyRow
+        value={settings.hands_free_hotkey ?? ""}
+        onChange={(accelerator) => onChange({ ...settings, hands_free_hotkey: accelerator })}
+      />
 
       <Card>
         <SectionTitle sub="Grant these to WhimprFlow — dots update automatically within a few seconds.">

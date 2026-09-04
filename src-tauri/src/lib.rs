@@ -101,8 +101,11 @@ fn get_settings() -> whimpr_core::Settings {
 }
 
 #[tauri::command]
-fn set_settings(settings: whimpr_core::Settings) {
+fn set_settings(app: tauri::AppHandle, settings: whimpr_core::Settings) {
     hotkey::update_settings(settings);
+    // The hands-free hotkey may have changed — re-register it from the new
+    // settings so a customized combo takes effect without a relaunch.
+    apply_hands_free_shortcut(&app);
 }
 
 /// Stop and finalize the current recording — the overlay pill's red Stop button.
@@ -263,8 +266,40 @@ fn set_api_key(provider: String, key: String) -> Result<(), String> {
     Ok(())
 }
 
+/// (Re)register the customizable hands-free global hotkey from the current
+/// settings — press once to start hands-free dictation, again to stop. Called at
+/// startup and whenever settings change. Best-effort: an unregisterable or empty
+/// accelerator just leaves the hotkey off (Fn push-to-talk and double-tap-Fn
+/// hands-free still work), never a crash.
+fn apply_hands_free_shortcut(app: &tauri::AppHandle) {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    let global_shortcut = app.global_shortcut();
+    let _ = global_shortcut.unregister_all();
+    let accelerator = hotkey::current_settings().hands_free_hotkey;
+    if accelerator.trim().is_empty() {
+        return;
+    }
+    if let Err(e) = global_shortcut.register(accelerator.as_str()) {
+        eprintln!("[whimpr] hands-free hotkey '{accelerator}' could not be registered: {e}");
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
+        .plugin(
+            // The customizable hands-free hotkey lives here — the OS registers the
+            // chord, so pressing it fires our handler AND is suppressed from the
+            // focused app (a listen-only CGEvent tap could not consume a printable
+            // key like Space). Only the hands-free shortcut is ever registered, so
+            // any Pressed event is a hands-free toggle.
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|_app, _shortcut, event| {
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        hotkey::trigger_hands_free();
+                    }
+                })
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![
             get_settings,
             set_settings,
@@ -295,6 +330,9 @@ pub fn run() {
 
             // Wire the Fn key to the pill via the real state machine.
             hotkey::install(app.handle().clone());
+
+            // Register the customizable hands-free hotkey (default Cmd+Shift+Space).
+            apply_hands_free_shortcut(app.handle());
 
             // Keep the permission rows honest without the Hub having to be awake
             // to ask. This is what makes the setup screen's promise ("turns green
