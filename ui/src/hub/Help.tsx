@@ -1,9 +1,7 @@
-import { useEffect, useState } from "react";
 import { font } from "../tokens/values";
 import { theme } from "./theme";
-import { Button, Card, PageTitle } from "./ui";
+import { Card, PageTitle } from "./ui";
 import { Icon, type IconName } from "./icons";
-import { exportDiagnostics, getBuildInfo, type BuildInfo } from "./api";
 
 const TIPS: { icon: IconName; title: string; body: string }[] = [
   {
@@ -29,13 +27,6 @@ const TIPS: { icon: IconName; title: string; body: string }[] = [
 ];
 
 export function Help() {
-  const [build, setBuild] = useState<BuildInfo | null>(null);
-  const [diag, setDiag] = useState<string | null>(null);
-
-  useEffect(() => {
-    void getBuildInfo().then(setBuild);
-  }, []);
-
   return (
     <div style={{ maxWidth: 720 }}>
       <PageTitle sub="Tips, support, and diagnostics.">Help</PageTitle>
@@ -45,7 +36,7 @@ export function Help() {
           Help & Support
         </div>
         <div style={{ color: theme.textMuted, fontSize: 13, lineHeight: 1.45, marginBottom: 12 }}>
-          Version {build?.version ?? "…"} ({build?.git_hash ?? "…"}). Troubleshooting guide:{" "}
+          Troubleshooting guide:{" "}
           <a
             href="https://github.com/ch1kim0n1/WhimprFlow/blob/main/docs/HELP.md"
             target="_blank"
@@ -73,21 +64,7 @@ export function Help() {
           >
             support@whimprflow.com
           </a>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              void exportDiagnostics()
-                .then((p) => setDiag(p))
-                .catch((e) => setDiag(String(e)));
-            }}
-          >
-            Export diagnostics
-          </Button>
         </div>
-        {diag && (
-          <div style={{ marginTop: 10, fontSize: 12.5, color: theme.textMuted }}>{diag}</div>
-        )}
       </Card>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>

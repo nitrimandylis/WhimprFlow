@@ -110,6 +110,7 @@ export const DEFAULT_KEYBINDINGS: KeyBindings = {
   undo_last: { meta: true, ctrl: false, alt: false, shift: true, key: { kind: "char", value: "Z" } },
 };
 
+// ponytail: backend stub missing, remove when implemented
 export async function getKeybindings(): Promise<KeyBindings> {
   try {
     return await invoke<KeyBindings>("get_keybindings");
@@ -201,7 +202,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sound_on_start: true,
   hands_free_hotkey: "CmdOrCtrl+Shift+Space",
   show_pill_always: true,
-  pill_bottom_inset: 96,
+  pill_bottom_inset: 12,
   pill_pos: null,
   pill_follows_active_display: true,
   language: "en",
@@ -367,6 +368,7 @@ export async function getHistory(limit?: number): Promise<HistoryItem[]> {
   }
 }
 
+// ponytail: backend stub missing, remove when implemented
 export async function exportHistory(format: "json" | "txt"): Promise<string> {
   return invoke<string>("export_history", { format });
 }
@@ -547,6 +549,7 @@ export interface Health {
   accessibility: boolean;
 }
 
+// ponytail: backend stub missing, remove when implemented
 export async function getHealth(): Promise<Health> {
   try {
     return await invoke<Health>("get_health");
@@ -568,10 +571,12 @@ export interface ModelProgress {
 }
 
 /** Download recommended Whisper model; listen to `whimpr://model/progress` for bytes. */
+// ponytail: backend stub missing, remove when implemented
 export async function downloadAsrModel(modelId?: string): Promise<string> {
   return invoke<string>("download_asr_model", { modelId: modelId ?? null });
 }
 
+// ponytail: backend stub missing, remove when implemented
 export async function reloadAsr(): Promise<void> {
   try {
     await invoke("reload_asr");
@@ -585,6 +590,7 @@ export interface BuildInfo {
   git_hash: string;
 }
 
+// ponytail: backend stub missing, remove when implemented
 export async function getBuildInfo(): Promise<BuildInfo> {
   try {
     return await invoke<BuildInfo>("get_build_info");
@@ -593,10 +599,12 @@ export async function getBuildInfo(): Promise<BuildInfo> {
   }
 }
 
+// ponytail: backend stub missing, remove when implemented
 export async function exportDiagnostics(): Promise<string> {
   return invoke<string>("export_diagnostics");
 }
 
+// ponytail: backend stub missing, remove when implemented
 export async function checkNetwork(): Promise<boolean> {
   try {
     return await invoke<boolean>("check_network");

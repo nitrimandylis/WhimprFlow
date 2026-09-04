@@ -647,7 +647,7 @@ export function SettingsPane({
             </div>
             <input
               type="range"
-              min={16}
+              min={8}
               max={220}
               step={4}
               value={settings.pill_bottom_inset}

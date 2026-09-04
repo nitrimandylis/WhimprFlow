@@ -1,9 +1,8 @@
-import { useEffect, useState } from "react";
 import { font } from "../tokens/values";
 import { theme } from "./theme";
-import { Button, Card, PageTitle } from "./ui";
+import { Card, PageTitle } from "./ui";
 import { DEFAULT_KEYBINDINGS } from "./api";
-import type { ChordJson, KeyBindings, KeyJson, Settings } from "./api";
+import type { ChordJson, KeyBindings, Settings } from "./api";
 
 const ACTION_ORDER: (keyof KeyBindings)[] = ["cancel", "paste_last", "copy_last", "undo_last"];
 
@@ -14,60 +13,12 @@ const ACTION_LABELS: Record<keyof KeyBindings, { label: string; hint: string }> 
   undo_last: { label: "Undo last cleanup", hint: "Revert the last cleanup edit back to the raw transcript." },
 };
 
-function keyEq(a: KeyJson, b: KeyJson): boolean {
-  if (a.kind !== b.kind) return false;
-  return a.kind === "char" && b.kind === "char" ? a.value === b.value : true;
-}
-
-function chordEq(a: ChordJson, b: ChordJson): boolean {
-  return a.meta === b.meta && a.ctrl === b.ctrl && a.alt === b.alt && a.shift === b.shift && keyEq(a.key, b.key);
-}
-
-function hasAnyModifier(c: ChordJson): boolean {
-  return c.meta || c.ctrl || c.alt || c.shift;
-}
-
-// Mirrors whimpr-core's KeyBindings::conflict_with: the name of whichever
-// binding (if any) already uses this exact chord, excluding "except".
-function conflictWith(kb: KeyBindings, chord: ChordJson, except: keyof KeyBindings): keyof KeyBindings | null {
-  for (const name of ACTION_ORDER) {
-    if (name !== except && chordEq(kb[name], chord)) return name;
-  }
-  return null;
-}
-
 function chordLabel(c: ChordJson): string {
   const mods = [c.meta && "⌘", c.ctrl && "⌃", c.alt && "⌥", c.shift && "⇧"]
     .filter(Boolean)
     .join("");
   const key = c.key.kind === "escape" ? "Esc" : c.key.value;
   return mods + key;
-}
-
-// Physical-key codes for the modifiers alone; keep listening, these aren't a
-// bindable key on their own.
-const MODIFIER_CODES = new Set([
-  "ControlLeft",
-  "ControlRight",
-  "ShiftLeft",
-  "ShiftRight",
-  "AltLeft",
-  "AltRight",
-  "MetaLeft",
-  "MetaRight",
-]);
-
-// Prefers "code" (physical key position, stable across keyboard layouts,
-// matching the native macOS/Windows keycode lookups) and falls back to "key"
-// for the rare case "code" isn't populated (some virtual keyboards/IMEs).
-function keyFromEvent(e: KeyboardEvent): KeyJson | null {
-  if (e.code === "Escape" || e.key === "Escape") return { kind: "escape" };
-  const letter = /^Key([A-Z])$/.exec(e.code);
-  if (letter) return { kind: "char", value: letter[1] };
-  const digit = /^Digit([0-9])$/.exec(e.code);
-  if (digit) return { kind: "char", value: digit[1] };
-  if (/^[a-zA-Z0-9]$/.test(e.key)) return { kind: "char", value: e.key.toUpperCase() };
-  return null;
 }
 
 function ChordBadge({ chord }: { chord: ChordJson }) {
@@ -100,56 +51,10 @@ function FixedRow({ label, hint }: { label: string; hint: string }) {
   );
 }
 
-function BindingRow({
-  name,
-  chord,
-  keybindings,
-  recording,
-  onStartRecording,
-  onStopRecording,
-  onSave,
-}: {
-  name: keyof KeyBindings;
-  chord: ChordJson;
-  keybindings: KeyBindings;
-  recording: boolean;
-  onStartRecording: () => void;
-  onStopRecording: () => void;
-  onSave: (chord: ChordJson) => void;
-}) {
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!recording) {
-      setError(null);
-      return;
-    }
-    const handler = (e: KeyboardEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (MODIFIER_CODES.has(e.code)) return;
-      const key = keyFromEvent(e);
-      if (!key) {
-        setError("Use a letter, digit, or Escape.");
-        return;
-      }
-      const next: ChordJson = { meta: e.metaKey, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, key };
-      if (!hasAnyModifier(next) && next.key.kind !== "escape") {
-        setError("Needs at least one modifier.");
-        return;
-      }
-      const conflict = conflictWith(keybindings, next, name);
-      if (conflict) {
-        setError(`Already used by "${ACTION_LABELS[conflict].label}".`);
-        return;
-      }
-      onSave(next);
-      onStopRecording();
-    };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
-  }, [recording, keybindings, name, onSave, onStopRecording]);
-
+// ponytail: rebinding is gone — the backend has no command to persist a
+// changed chord, so this row is display-only. Upgrade path: bring back
+// recording + save once a set_keybindings command exists.
+function BindingRow({ name, chord }: { name: keyof KeyBindings; chord: ChordJson }) {
   const { label, hint } = ACTION_LABELS[name];
 
   return (
@@ -159,44 +64,19 @@ function BindingRow({
           <div style={{ fontSize: 13.5, fontWeight: 600, color: theme.textBody }}>{label}</div>
           <div style={{ fontSize: 12.5, color: theme.textMuted, marginTop: 2 }}>{hint}</div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {recording ? (
-            <>
-              <span style={{ fontSize: 12.5, color: theme.accentDeep, fontWeight: 600 }}>Press keys...</span>
-              <Button variant="ghost" size="sm" onClick={onStopRecording}>
-                Cancel
-              </Button>
-            </>
-          ) : (
-            <>
-              <ChordBadge chord={chord} />
-              <Button variant="ghost" size="sm" onClick={onStartRecording}>
-                Change
-              </Button>
-            </>
-          )}
-        </div>
+        <ChordBadge chord={chord} />
       </div>
-      {error && <div style={{ fontSize: 12, color: "#e5484d", marginTop: 6, textAlign: "right" }}>{error}</div>}
     </div>
   );
 }
 
-export function ShortcutsPane({ settings, onChange }: { settings: Settings; onChange: (s: Settings) => void }) {
-  const [recordingName, setRecordingName] = useState<keyof KeyBindings | null>(null);
-
+export function ShortcutsPane({ settings }: { settings: Settings; onChange: (s: Settings) => void }) {
   // Guard: keybindings may be missing if the backend doesn't have the field yet.
   const kb: KeyBindings = settings.keybindings ?? DEFAULT_KEYBINDINGS;
 
-  const saveBinding = (name: keyof KeyBindings, chord: ChordJson) => {
-    onChange({ ...settings, keybindings: { ...kb, [name]: chord } });
-  };
-
   return (
     <div style={{ maxWidth: 720 }}>
-      <PageTitle sub="Your daily-use keyboard shortcuts. The four below are yours to customize.">
-        Shortcuts
-      </PageTitle>
+      <PageTitle sub="Your daily-use keyboard shortcuts.">Shortcuts</PageTitle>
 
       <Card style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 15, fontWeight: 600, color: theme.textStrong, marginBottom: 4 }}>Recording</div>
@@ -224,21 +104,13 @@ export function ShortcutsPane({ settings, onChange }: { settings: Settings; onCh
       <Card>
         <div style={{ fontSize: 15, fontWeight: 600, color: theme.textStrong, marginBottom: 4 }}>Customizable</div>
         <div style={{ fontSize: 13, color: theme.textMuted, marginBottom: 6 }}>
-          Click Change, then press the new key combo. Needs at least one modifier key, unless it's Escape.
+          These shortcuts are fixed for now.
         </div>
         <div style={{ display: "flex", flexDirection: "column" }}>
           {ACTION_ORDER.map((name, i) => (
             <div key={name}>
               {i > 0 && <div style={{ borderTop: `1px solid ${theme.border}` }} />}
-              <BindingRow
-                name={name}
-                chord={kb[name]}
-                keybindings={kb}
-                recording={recordingName === name}
-                onStartRecording={() => setRecordingName(name)}
-                onStopRecording={() => setRecordingName(null)}
-                onSave={(chord) => saveBinding(name, chord)}
-              />
+              <BindingRow name={name} chord={kb[name]} />
             </div>
           ))}
         </div>
