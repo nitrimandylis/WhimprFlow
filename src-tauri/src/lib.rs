@@ -220,60 +220,6 @@ fn pill_start() {
     hotkey::ui_start();
 }
 
-// ── Transforms ───────────────────────────────────────────────────────────────
-#[tauri::command]
-fn get_transforms() -> Vec<whimpr_core::Transform> {
-    hotkey::transforms()
-}
-
-#[tauri::command]
-fn set_transform_enabled(id: String, enabled: bool) {
-    hotkey::transform_set_enabled(&id, enabled);
-}
-
-// ── Snippets ─────────────────────────────────────────────────────────────────
-#[tauri::command]
-fn get_snippets() -> Vec<whimpr_core::Snippet> {
-    hotkey::snippets()
-}
-
-#[tauri::command]
-fn add_snippet(trigger: String, expansion: String) {
-    hotkey::snippet_add(trigger, expansion);
-}
-
-#[tauri::command]
-fn remove_snippet(trigger: String) {
-    hotkey::snippet_remove(&trigger);
-}
-
-// ── Scratchpad ───────────────────────────────────────────────────────────────
-/// While capture is on, finished dictations are appended to the Scratchpad
-/// instead of being pasted into whatever app happens to be frontmost.
-#[tauri::command]
-fn set_scratchpad_capture(on: bool) {
-    hotkey::set_scratchpad_capture(on);
-}
-
-#[tauri::command]
-fn get_scratchpad_capture() -> bool {
-    hotkey::scratchpad_capture()
-}
-
-#[tauri::command]
-fn get_scratchpad() -> String {
-    std::fs::read_to_string(hotkey::scratchpad_path()).unwrap_or_default()
-}
-
-#[tauri::command]
-fn set_scratchpad(text: String) -> Result<(), String> {
-    let path = hotkey::scratchpad_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(path, text).map_err(|e| e.to_string())
-}
-
 /// Input device names for the microphone picker.
 #[tauri::command]
 fn list_microphones() -> Vec<String> {
@@ -626,18 +572,6 @@ fn set_settings(app: tauri::AppHandle, settings: whimpr_core::Settings) {
     sync_pill_visibility(&app, hotkey::last_bar());
 }
 
-/// Stop and finalize the current recording — the overlay pill's red Stop button.
-#[tauri::command]
-fn stop_dictation() {
-    hotkey::stop_dictation();
-}
-
-/// Discard the current recording — the overlay pill's ✕ button.
-#[tauri::command]
-fn cancel_dictation() {
-    hotkey::cancel_dictation();
-}
-
 /// Aggregated dictation stats for the Hub dashboard. `tz_offset_minutes` is the
 /// browser's `Date.getTimezoneOffset()` so "today"/streak match the user's clock.
 #[tauri::command]
@@ -937,8 +871,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             set_settings,
-            stop_dictation,
-            cancel_dictation,
             get_stats,
             get_history,
             copy_to_clipboard,
@@ -947,15 +879,6 @@ pub fn run() {
             pill_cancel,
             pill_stop,
             pill_start,
-            get_transforms,
-            set_transform_enabled,
-            get_snippets,
-            add_snippet,
-            remove_snippet,
-            set_scratchpad_capture,
-            get_scratchpad_capture,
-            get_scratchpad,
-            set_scratchpad,
             set_pill_position,
             reset_pill_position,
             get_dictionary,

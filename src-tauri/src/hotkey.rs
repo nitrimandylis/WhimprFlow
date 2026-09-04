@@ -111,13 +111,8 @@ mod imp {
     static ANTHROPIC: OnceLock<Mutex<Option<whimpr_cleanup::AnthropicProvider>>> = OnceLock::new();
     static LOCAL: OnceLock<Mutex<Option<crate::local_llm::LocalWorker>>> = OnceLock::new();
     static SETTINGS: OnceLock<Mutex<whimpr_core::Settings>> = OnceLock::new();
-    static SNIPPETS: OnceLock<Mutex<whimpr_core::SnippetStore>> = OnceLock::new();
-    static TRANSFORMS: OnceLock<Mutex<whimpr_core::TransformStore>> = OnceLock::new();
     /// Last state pushed to the pill, so UI-driven controls can act correctly.
     static LAST_BAR: OnceLock<Mutex<&'static str>> = OnceLock::new();
-    /// When set, finished dictations are sent to the Hub's Scratchpad instead of
-    /// being pasted into the frontmost app.
-    static SCRATCHPAD_CAPTURE: AtomicBool = AtomicBool::new(false);
     static DICTIONARY: OnceLock<Mutex<whimpr_core::DictionaryStore>> = OnceLock::new();
     static STATS: OnceLock<Mutex<whimpr_core::StatsStore>> = OnceLock::new();
 
@@ -160,15 +155,6 @@ mod imp {
     }
     fn dict_path() -> PathBuf {
         support_dir().join("dictionary.json")
-    }
-    fn snippets_path() -> PathBuf {
-        support_dir().join("snippets.json")
-    }
-    fn transforms_path() -> PathBuf {
-        support_dir().join("transforms.json")
-    }
-    pub fn scratchpad_path() -> PathBuf {
-        support_dir().join("scratchpad.txt")
     }
     fn stats_path() -> PathBuf {
         support_dir().join("stats.json")
@@ -397,123 +383,6 @@ mod imp {
         });
     }
 
-    // ── Transforms ───────────────────────────────────────────────────────────
-    /// If the utterance opens with a transform trigger, run the transform and
-    /// return its output.
-    ///
-    /// The deterministic gates are deliberately NOT applied here. They exist to
-    /// catch a cleanup model rewriting when it was told only to tidy — but a
-    /// transform is *asked* to rewrite, so every gate (over-deletion, novelty,
-    /// hallucination) would reject a perfectly good result.
-    fn try_transform(raw: &str, settings: &whimpr_core::Settings) -> Option<String> {
-        let (name, prompt, body) = {
-            let store = TRANSFORMS.get()?.lock().unwrap();
-            let (t, body) = store.detect(raw)?;
-            (t.name.clone(), t.prompt.clone(), body)
-        };
-        eprintln!("[whimpr] transform: {name}");
-
-        let style = {
-            let s = settings.style_instructions.trim();
-            if s.is_empty() { None } else { Some(s.to_string()) }
-        };
-        let ctx = CleanupContext {
-            level: settings.cleanup_level,
-            transform_prompt: Some(prompt),
-            style,
-            ..Default::default()
-        };
-
-        let run_local = || -> Option<anyhow::Result<String>> {
-            LOCAL.get().and_then(|m| {
-                m.lock().unwrap().as_mut().map(|w| {
-                    let messages = whimpr_core::cleanup::build_messages(&body, &ctx);
-                    w.cleanup(&messages)
-                })
-            })
-        };
-        let result = match settings.cleanup_mode {
-            CleanupMode::OpenAi => OPENAI
-                .get()
-                .and_then(|m| m.lock().unwrap().as_ref().map(|p| p.cleanup(&body, &ctx)))
-                .or_else(run_local),
-            CleanupMode::Anthropic => ANTHROPIC
-                .get()
-                .and_then(|m| m.lock().unwrap().as_ref().map(|p| p.cleanup(&body, &ctx)))
-                .or_else(run_local),
-            CleanupMode::Local => run_local(),
-            CleanupMode::Raw => None,
-        };
-
-        match result {
-            Some(Ok(out)) if !out.trim().is_empty() => {
-                Some(whimpr_core::cleanup::post_process(&out))
-            }
-            Some(Err(e)) => {
-                eprintln!("[whimpr] transform failed, using the words as spoken: {e}");
-                // Better to paste what they said than to swallow the dictation.
-                Some(body)
-            }
-            _ => Some(body),
-        }
-    }
-
-    pub fn transforms() -> Vec<whimpr_core::Transform> {
-        TRANSFORMS
-            .get()
-            .map(|m| m.lock().unwrap().items.clone())
-            .unwrap_or_default()
-    }
-
-    pub fn transform_set_enabled(id: &str, enabled: bool) {
-        if let Some(m) = TRANSFORMS.get() {
-            let mut g = m.lock().unwrap();
-            g.set_enabled(id, enabled);
-            let _ = g.save(&transforms_path());
-        }
-    }
-
-    // ── Snippets ─────────────────────────────────────────────────────────────
-    fn expand_snippets(text: &str) -> String {
-        SNIPPETS
-            .get()
-            .map(|m| m.lock().unwrap().expand(text))
-            .unwrap_or_else(|| text.to_string())
-    }
-
-    pub fn snippets() -> Vec<whimpr_core::Snippet> {
-        SNIPPETS
-            .get()
-            .map(|m| m.lock().unwrap().items.clone())
-            .unwrap_or_default()
-    }
-
-    pub fn snippet_add(trigger: String, expansion: String) {
-        if let Some(m) = SNIPPETS.get() {
-            let mut g = m.lock().unwrap();
-            g.add(&trigger, &expansion);
-            let _ = g.save(&snippets_path());
-        }
-    }
-
-    pub fn snippet_remove(trigger: &str) {
-        if let Some(m) = SNIPPETS.get() {
-            let mut g = m.lock().unwrap();
-            g.remove(trigger);
-            let _ = g.save(&snippets_path());
-        }
-    }
-
-    // ── Scratchpad ───────────────────────────────────────────────────────────
-    pub fn set_scratchpad_capture(on: bool) {
-        SCRATCHPAD_CAPTURE.store(on, Ordering::Relaxed);
-        eprintln!("[whimpr] scratchpad capture: {on}");
-    }
-
-    pub fn scratchpad_capture() -> bool {
-        SCRATCHPAD_CAPTURE.load(Ordering::Relaxed)
-    }
-
     /// Push the settings that other subsystems cache into place. Everything here
     /// takes effect immediately — no relaunch, no model reload.
     pub fn apply_live_settings(s: &whimpr_core::Settings) {
@@ -586,10 +455,6 @@ mod imp {
         let level = settings.cleanup_level;
         if matches!(settings.cleanup_mode, CleanupMode::Raw) || level.bypasses_llm() {
             return raw.to_string();
-        }
-        // A spoken transform command takes over the whole utterance.
-        if let Some(out) = try_transform(raw, &settings) {
-            return out;
         }
         // Turn explicit spoken layout cues ("new line", "new paragraph") into break
         // markers up front — the model passes an opaque marker through reliably but
@@ -806,42 +671,25 @@ mod imp {
                             if text != raw {
                                 eprintln!("[whimpr] CLEANED:   \"{}\"", text);
                             }
-                            // Snippet expansion happens AFTER the cleanup gates:
-                            // an expansion legitimately multiplies the text, which
-                            // the over-deletion / novelty gates would otherwise
-                            // read as the model going rogue.
-                            let text = expand_snippets(&text);
 
                             if !text.is_empty() {
-                                if SCRATCHPAD_CAPTURE.load(Ordering::Relaxed) {
-                                    // Routed to the Hub instead of the frontmost app.
-                                    let _ = app2.emit("whimpr://scratchpad/append", &text);
-                                    eprintln!("[whimpr] routed to scratchpad");
-                                } else if let Err(e) = crate::paste::paste_text(&text) {
+                                if let Err(e) = crate::paste::paste_text(&text) {
                                     eprintln!("[whimpr] paste failed: {e}");
-                                    // Distinguish the two real causes: Accessibility was
-                                    // never (or no longer) granted, vs. everything else
-                                    // (clipboard contention, etc.) — `is_trusted()` is the
-                                    // authoritative check, cheaper and more precise than
-                                    // matching on the error string.
                                     let failure = if !crate::paste::is_trusted() {
                                         whimpr_core::InjectionFailure::AccessibilityNotGranted
                                     } else {
                                         whimpr_core::InjectionFailure::ClipboardUnavailable
                                     };
                                     crate::diag::report(&app2, failure);
-                                } else {
-                                    crate::diag::clear_last_error();
+                                    // Don't play success chime or log to history on a
+                                    // failed paste: the text never reached the cursor.
+                                    finish();
+                                    return;
                                 }
+                                crate::diag::clear_last_error();
                                 play_cue(Cue::Done);
-                                // Log words + speaking time for the Hub stats (WPM, streak…).
                                 record_dictation(&text, res.duration_secs());
-                                // Watch the field for a post-paste correction to learn (✨).
-                                // Scratchpad captures don't paste into another app's
-                                // field, so there is nothing to watch for a correction.
-                                if !SCRATCHPAD_CAPTURE.load(Ordering::Relaxed) {
-                                    crate::autolearn::watch_correction(&text);
-                                }
+                                crate::autolearn::watch_correction(&text);
                             } else if was_real_attempt {
                                 crate::diag::report(&app2, whimpr_core::InjectionFailure::EmptyTranscript);
                             }
@@ -922,20 +770,6 @@ mod imp {
         event
     }
 
-    /// Stop and finalize the current recording — the pill's red Stop button.
-    /// Drives the same state machine the Fn key does, so it works in either
-    /// mode. Reported dead in Publik Test 2 ("the red with the square in it").
-    pub fn stop_dictation() {
-        handle_input(Input::Trigger(TriggerToken::Stop { at_ms: now_ms() }));
-    }
-
-    /// Discard the current recording — the pill's ✕ button. Same path Esc would
-    /// take, if Esc were wired. Reported dead in Publik Test 2 ("the X button
-    /// doesn't work").
-    pub fn cancel_dictation() {
-        handle_input(Input::Trigger(TriggerToken::Cancel { at_ms: now_ms() }));
-    }
-
     /// Toggle HANDS-FREE (locked) dictation — the customizable global hotkey
     /// (default Cmd+Shift+Space) fires this. The state machine treats a
     /// `HandsFree` press as a toggle: from idle it starts a locked session that
@@ -1000,8 +834,6 @@ mod imp {
         );
         let _ = SETTINGS.set(Mutex::new(settings));
         let _ = DICTIONARY.set(Mutex::new(dict));
-        let _ = SNIPPETS.set(Mutex::new(whimpr_core::SnippetStore::load(&snippets_path())));
-        let _ = TRANSFORMS.set(Mutex::new(whimpr_core::TransformStore::load(&transforms_path())));
         let _ = STATS.set(Mutex::new(whimpr_core::StatsStore::load(&stats_path())));
         // Bind the push-to-talk key before the tap is created.
         apply_live_settings(&current_settings());
@@ -1118,10 +950,9 @@ mod imp {
 
 #[cfg(target_os = "macos")]
 pub use imp::{
-    cancel_dictation, current_settings, dictionary_add, dictionary_entries, dictionary_learn,
+    current_settings, dictionary_add, dictionary_entries, dictionary_learn,
     dictionary_remove, history, install, last_bar, mark_tap_stale, rebuild_providers,
-    scratchpad_capture, scratchpad_path, set_scratchpad_capture, snippet_add, snippet_remove,
-    snippets, stats_summary, stop_dictation, tap_live, transform_set_enabled, transforms,
+    stats_summary, tap_live,
     trigger_hands_free, ui_cancel, ui_start, ui_stop, update_settings,
 };
 
@@ -1154,25 +985,7 @@ mod other {
     pub fn dictionary_add(_correct: String, _mishears: Vec<String>) {}
     pub fn dictionary_remove(_correct: &str) {}
     pub fn dictionary_learn(_correct: String, _mishears: Vec<String>) {}
-    pub fn stop_dictation() {}
-    pub fn cancel_dictation() {}
     pub fn trigger_hands_free() {}
-    pub fn snippets() -> Vec<whimpr_core::Snippet> {
-        Vec::new()
-    }
-    pub fn snippet_add(_trigger: String, _expansion: String) {}
-    pub fn snippet_remove(_trigger: &str) {}
-    pub fn set_scratchpad_capture(_on: bool) {}
-    pub fn scratchpad_capture() -> bool {
-        false
-    }
-    pub fn scratchpad_path() -> std::path::PathBuf {
-        std::path::PathBuf::from("scratchpad.txt")
-    }
-    pub fn transforms() -> Vec<whimpr_core::Transform> {
-        Vec::new()
-    }
-    pub fn transform_set_enabled(_id: &str, _enabled: bool) {}
     pub fn ui_cancel() {}
     pub fn ui_stop() {}
     pub fn ui_start() {}
@@ -1186,9 +999,8 @@ mod other {
 }
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub use other::{
-    cancel_dictation, current_settings, dictionary_add, dictionary_entries, dictionary_learn,
+    current_settings, dictionary_add, dictionary_entries, dictionary_learn,
     dictionary_remove, history, install, last_bar, mark_tap_stale, rebuild_providers,
-    scratchpad_capture, scratchpad_path, set_scratchpad_capture, snippet_add, snippet_remove,
-    snippets, stats_summary, stop_dictation, tap_live, transform_set_enabled, transforms,
+    stats_summary, tap_live,
     trigger_hands_free, ui_cancel, ui_start, ui_stop, update_settings,
 };

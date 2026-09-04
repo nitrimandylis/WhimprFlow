@@ -10,8 +10,6 @@ pub mod cleanup;
 pub mod diagnostics;
 pub mod dictionary;
 pub mod settings;
-pub mod snippets;
-pub mod transforms;
 pub mod state;
 pub mod stats;
 pub mod types;
@@ -21,8 +19,6 @@ pub use cleanup::{CleanupContext, CleanupLevel, CleanupProvider, ProviderId, Voc
 pub use diagnostics::{Diagnostic, InjectionFailure, Platform};
 pub use dictionary::{DictSource, DictionaryEntry, DictionaryStore};
 pub use settings::{AsrMode, CleanupMode, PushToTalkKey, Settings};
-pub use snippets::{Snippet, SnippetStore};
-pub use transforms::{Transform, TransformStore};
 pub use stats::{HistoryItem, SessionRecord, StatsStore, StatsSummary};
 pub use state::{Action, BarState, DictationState, Input, PipelineEvent, StateMachine, TriggerToken};
 pub use types::{BindingId, RecordMode, SessionId};
