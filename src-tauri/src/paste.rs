@@ -149,6 +149,25 @@ mod imp {
         crate::permissions::resolve_microphone(cached, tcc_preflight("kTCCServiceMicrophone"))
     }
 
+    /// Ask macOS for microphone access explicitly so TCC creates the app's row.
+    pub fn request_microphone_access() {
+        use block2::RcBlock;
+        use objc2::runtime::Bool;
+        use objc2_av_foundation::{AVCaptureDevice, AVMediaTypeAudio};
+
+        // The completion handler is `void (^)(BOOL granted)` — the block's
+        // argument is objc2's `Bool`, not Rust's `bool`. We don't act on the
+        // result here; requesting is what makes macOS create the app's TCC row so
+        // the reader can grant it in System Settings. `AVMediaTypeAudio` is an
+        // extern static, so reading it is unsafe too.
+        let completion = RcBlock::new(|_granted: Bool| {});
+        unsafe {
+            if let Some(audio) = AVMediaTypeAudio {
+                AVCaptureDevice::requestAccessForMediaType_completionHandler(audio, &completion);
+            }
+        }
+    }
+
     /// The app macOS holds responsible for what we do — `None` when that's us.
     ///
     /// TCC never asks "is this WhimprFlow?". It asks the *responsible process*,
@@ -233,7 +252,7 @@ mod imp {
 #[cfg(target_os = "macos")]
 pub use imp::{
     charged_to, input_monitoring_granted, is_trusted, microphone_authorization, paste_text,
-    prompt_accessibility, request_input_monitoring,
+    prompt_accessibility, request_input_monitoring, request_microphone_access,
 };
 
 #[cfg(not(target_os = "macos"))]

@@ -47,3 +47,8 @@ macos-accessibility-client = "0.0.1"
 objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSRunningApplication"] }
 objc2-foundation = { version = "0.3", features = ["NSString"] }
 objc2-av-foundation = { version = "0.3", features = ["AVCaptureDevice", "AVMediaFormat"] }
+# Obj-C block support + the objc2 runtime `Bool`, for the AVCaptureDevice
+# mic-permission completion handler in paste.rs. Versions match what the objc2
+# framework crates already resolve to.
+block2 = "0.6"
+objc2 = "0.6"

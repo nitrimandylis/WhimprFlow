@@ -206,18 +206,13 @@ fn open_url(url: &str) {
     let _ = std::process::Command::new("open").arg(url).spawn();
 }
 
-/// Request microphone access: trigger the native prompt (bundle has a usage string)
-/// by briefly opening the input device, and open the Microphone settings pane.
+/// Request microphone access with AVFoundation so macOS registers this bundle in
+/// Privacy & Security, then open the Microphone settings pane.
 #[tauri::command]
 fn request_microphone() {
     #[cfg(target_os = "macos")]
     {
-        std::thread::spawn(|| {
-            if let Ok(h) = whimpr_audio::start(|_: &[f32]| {}) {
-                std::thread::sleep(std::time::Duration::from_millis(400));
-                let _ = h.stop();
-            }
-        });
+        paste::request_microphone_access();
         open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone");
     }
 }
