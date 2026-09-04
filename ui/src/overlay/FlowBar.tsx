@@ -120,11 +120,6 @@ function buttonHandlers(onActivate: () => void) {
   };
 }
 
-// ponytail: hover action cluster removed — overlay ignores mouse events
-// so it never steals focus from the user's app. Dictation is Fn-key-driven.
-// Upgrade path: use NSPanel with nonactivatingPanel style if click
-// interaction is ever needed without stealing focus.
-
 function CancelButton() {
   return (
     <div
@@ -172,19 +167,113 @@ function StopButton() {
   );
 }
 
+// ── Hover action buttons ────────────────────────────────────────────────────
+// Shown below the pill on hover. Rust toggles ignoresMouseEvents so these
+// receive real clicks without the pill stealing focus at rest.
+
+const LANG_CYCLE = ["en", "hi", "gu", "auto"] as const;
+const LANG_NAMES: Record<string, string> = { en: "EN", hi: "हिं", gu: "ગુ", auto: "Auto" };
+function langLabel(code: string) { return LANG_NAMES[code] ?? code.toUpperCase(); }
+
+function GlobeIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18" />
+    </svg>
+  );
+}
+
+function NoteIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M5 3.5h14v12l-4.5 4.5H5z" strokeLinejoin="round" />
+      <path d="M19 15.5h-4.5V20" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function RoundButton({
+  children,
+  onActivate,
+  title,
+  active = false,
+}: {
+  children: React.ReactNode;
+  onActivate: () => void;
+  title: string;
+  active?: boolean;
+}) {
+  return (
+    <div
+      title={title}
+      {...buttonHandlers(onActivate)}
+      style={{
+        width: 40,
+        height: 40,
+        borderRadius: 9999,
+        background: active ? palette.accent500 : pillFill.base,
+        border: `1px solid rgba(255,255,255,${active ? 0.25 : 0.1})`,
+        boxShadow: pillFill.shadow,
+        color: active ? "#08201E" : palette.pillText,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        flex: "0 0 auto",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 export function FlowBar() {
   const [state, setState] = useState<BarState>("idle");
   const [bars, setBars] = useState<number[]>([]);
-  // Set by `whimpr://error`, shown while state === "error". Falls back to a
-  // generic line if the error-state event somehow arrives without one (e.g.
-  // an older build, or a future ShowBar(Error) call that doesn't go through
-  // `diag::report`).
   const [errorText, setErrorText] = useState<ErrorEvent | null>(null);
-  // Live provisional text while recording (streaming preview).
   const [partial, setPartial] = useState("");
-  // Insertion receipt text (spec: whimpr://receipt), shown for RECEIPT_MS.
   const [receipt, setReceipt] = useState<string | null>(null);
   const receiptTimer = useRef<number | undefined>(undefined);
+  // Driven by Rust cursor tracking (whimpr://hover). Rust also toggles
+  // ignoresMouseEvents so buttons are clickable while hovering.
+  const [hover, setHover] = useState(false);
+  const [language, setLanguage] = useState("en");
+  const [scratch, setScratch] = useState(false);
+
+  // Read settings the action buttons display, refreshed each hover.
+  useEffect(() => {
+    if (!hover) return;
+    void (async () => {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const s = await invoke<{ language: string }>("get_settings");
+        setLanguage(s.language);
+        setScratch(await invoke<boolean>("get_scratchpad_capture"));
+      } catch { /* browser preview */ }
+    })();
+  }, [hover]);
+
+  async function cycleLanguage() {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const s = await invoke<Record<string, unknown>>("get_settings");
+      const cur = String(s.language ?? "en");
+      const i = LANG_CYCLE.indexOf(cur as (typeof LANG_CYCLE)[number]);
+      const next = LANG_CYCLE[(i + 1) % LANG_CYCLE.length];
+      await invoke("set_settings", { settings: { ...s, language: next } });
+      setLanguage(next);
+    } catch { /* browser preview */ }
+  }
+
+  async function toggleScratch() {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const next = !scratch;
+      await invoke("set_scratchpad_capture", { on: next });
+      setScratch(next);
+    } catch { /* browser preview */ }
+  }
 
   useEffect(() => {
     let un1: (() => void) | undefined;
@@ -192,9 +281,9 @@ export function FlowBar() {
     let un3: (() => void) | undefined;
     let un4: (() => void) | undefined;
     let un5: (() => void) | undefined;
+    let un6: (() => void) | undefined;
     tauriListen<StateEvent>("whimpr://flowbar/state", (p) => {
       setState(p.state);
-      // A fresh session starts clean: no stale partial or receipt text.
       if (p.state === "recording") {
         setPartial("");
         setReceipt(null);
@@ -210,25 +299,22 @@ export function FlowBar() {
       window.clearTimeout(receiptTimer.current);
       receiptTimer.current = window.setTimeout(() => setReceipt(null), RECEIPT_MS);
     }).then((u) => (un5 = u));
+    tauriListen<boolean>("whimpr://hover", (over) => setHover(over)).then((u) => (un6 = u));
     return () => {
       un1?.();
       un2?.();
       un3?.();
       un4?.();
       un5?.();
+      un6?.();
       window.clearTimeout(receiptTimer.current);
     };
   }, []);
 
   const recording = state === "recording" || state === "locked";
-  // Hold the status form while a receipt is showing: the shell flips the bar
-  // back to idle ~500ms after "done", which would otherwise cut the receipt
-  // flash (including error detail) short of its full RECEIPT_MS.
   const isIdle = state === "idle" && receipt === null;
   const processing = state === "transcribing";
   const isError = state === "error";
-  // The receipt (pasted / noted / error detail) supersedes the generic labels
-  // for its ~1.6s flash after a finalize.
   const statusText =
     state === "transcribing"
       ? "Cleaning up…"
@@ -239,25 +325,20 @@ export function FlowBar() {
             ? "Discarded"
             : "Done"));
 
-  // Pill dimensions per state. Error gets extra width so the specific
-  // headline (e.g. "Accessibility permission needed") isn't clipped —
-  // truncating it back down to "Something's off" would defeat the point. The
-  // idle nub is deliberately tiny so it doesn't nag, but that also made it
-  // undiscoverable — so hovering expands it into a labelled affordance that
-  // says what a click will do. Recording gets slightly taller while a live
-  // partial line shows (streaming preview).
   const showPartial = recording && partial.length > 0;
   const dims = isIdle
-    ? { w: 76, h: 16 }
+    ? hover
+      ? { w: 158, h: 38 }
+      : { w: 76, h: 16 }
     : recording
       ? { w: 250, h: showPartial ? 62 : 44 }
       : isError
         ? { w: 280, h: 36 }
         : { w: 180, h: 36 };
 
+  const showActions = isIdle && hover;
+
   return (
-    // Bottom-aligned so the resting nub keeps its position and the hover UI grows
-    // upwards, rather than the whole cluster jumping when it expands.
     <div
       style={{
         position: "fixed",
@@ -269,7 +350,6 @@ export function FlowBar() {
         paddingBottom: 4,
         fontFamily: font.ui,
         userSelect: "none",
-        // Pointer events only on children, not the invisible overlay area.
         pointerEvents: "none",
       }}
     >
@@ -296,7 +376,24 @@ export function FlowBar() {
           pointerEvents: "auto",
         }}
       >
-        {isIdle ? null : recording ? (
+        {isIdle ? (
+          hover ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 9,
+                padding: "0 15px",
+                whiteSpace: "nowrap",
+                fontSize: 14,
+                fontWeight: 500,
+              }}
+            >
+              <span>Dictate</span>
+              <b style={{ fontWeight: 700 }}>fn</b>
+            </div>
+          ) : null
+        ) : recording ? (
           <div
             style={{
               display: "flex",
@@ -336,9 +433,16 @@ export function FlowBar() {
         )}
       </div>
 
-      {/* Added below the capsule on hover — the capsule stays put. */}
-      {/* ponytail: hover action buttons removed — overlay ignores mouse
-         events so it never steals focus. Dictation is Fn-key-driven. */}
+      {showActions && (
+        <div style={{ display: "flex", alignItems: "center", gap: 11, marginTop: 9, pointerEvents: "auto" }}>
+          <RoundButton title={`Language: ${langLabel(language)}`} onActivate={() => void cycleLanguage()}>
+            <GlobeIcon />
+          </RoundButton>
+          <RoundButton title={`Scratchpad: ${scratch ? "On" : "Off"}`} active={scratch} onActivate={() => void toggleScratch()}>
+            <NoteIcon />
+          </RoundButton>
+        </div>
+      )}
     </div>
   );
 }

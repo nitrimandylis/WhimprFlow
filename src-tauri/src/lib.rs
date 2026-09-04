@@ -422,6 +422,74 @@ fn spawn_display_watcher(app: tauri::AppHandle) {
     });
 }
 
+/// Is the cursor inside the pill zone (bottom-center of the overlay)?
+///
+/// Uses a proportional slice of the window, not the full bounds, so the
+/// transparent area above the pill doesn't trigger hover. The zone covers
+/// the expanded pill + action buttons (~100 logical points from the bottom,
+/// ~192 wide centered).
+fn cursor_over_pill_zone(w: &WebviewWindow, app: &tauri::AppHandle) -> bool {
+    let Ok(cursor) = app.cursor_position() else { return false };
+    let Ok(pos) = w.outer_position() else { return false };
+    let Ok(size) = w.outer_size() else { return false };
+
+    let ww = size.width as f64;
+    let wh = size.height as f64;
+    let cx = pos.x as f64 + ww / 2.0;
+    let bottom = pos.y as f64 + wh;
+    // Bottom 75% covers pill + action buttons; middle 60% covers their width.
+    let zone_w = ww * 0.6;
+    let zone_h = wh * 0.75;
+
+    cursor.x >= cx - zone_w / 2.0
+        && cursor.x <= cx + zone_w / 2.0
+        && cursor.y >= bottom - zone_h
+        && cursor.y <= bottom
+}
+
+/// Track cursor over the pill zone. On enter, emit `whimpr://hover` true and
+/// temporarily accept mouse events so the action buttons are clickable.
+/// On exit, emit false and go back to click-through.
+fn spawn_hover_watcher(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let mut was_over = false;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(60));
+
+            let Some(w) = app.get_webview_window(OVERLAY_LABEL) else { continue };
+            if !w.is_visible().unwrap_or(false) {
+                if was_over {
+                    was_over = false;
+                    let _ = app.emit_to(OVERLAY_LABEL, "whimpr://hover", false);
+                    #[cfg(target_os = "macos")]
+                    set_ignores_mouse(&w, true);
+                }
+                continue;
+            }
+
+            let over = cursor_over_pill_zone(&w, &app);
+            if over != was_over {
+                was_over = over;
+                let _ = app.emit_to(OVERLAY_LABEL, "whimpr://hover", over);
+                // Toggle click-through: off while hovering so buttons work,
+                // back on when leaving so the pill never steals focus.
+                #[cfg(target_os = "macos")]
+                set_ignores_mouse(&w, !over);
+            }
+        }
+    });
+}
+
+/// Set or clear ignoresMouseEvents on the overlay's NSWindow.
+#[cfg(target_os = "macos")]
+fn set_ignores_mouse(w: &WebviewWindow, ignore: bool) {
+    use objc2_app_kit::NSWindow;
+    if let Ok(ns_ptr) = w.ns_window() {
+        let ns_window: &NSWindow = unsafe { &*(ns_ptr as *const NSWindow) };
+        ns_window.setIgnoresMouseEvents(ignore);
+    }
+}
+
 /// Forget the dragged position and go back to the computed anchor.
 #[tauri::command]
 fn reset_pill_position(app: tauri::AppHandle) {
@@ -465,20 +533,27 @@ fn build_overlay(app: &tauri::App) -> tauri::Result<WebviewWindow> {
     #[cfg(target_os = "macos")]
     {
         use objc2_app_kit::NSWindow;
-        if let Ok(ns_ptr) = overlay.ns_window() {
-            // Safety: ns_window() returns a valid NSWindow pointer on macOS.
-            let ns_window: &NSWindow = unsafe { &*(ns_ptr as *const NSWindow) };
-            // CanJoinAllSpaces (1 << 0) | FullScreenAuxiliary (1 << 8)
-            ns_window.setCollectionBehavior(
-                objc2_app_kit::NSWindowCollectionBehavior(1 | (1 << 8)),
-            );
-            // NSStatusWindowLevel (25) floats above full-screen apps.
-            ns_window.setLevel(25);
-            // Let clicks pass through to the app underneath. The pill is
-            // a visual indicator only: dictation is driven by the Fn key,
-            // not by clicking the overlay. Without this, clicking the pill
-            // activates WhimprFlow and steals focus from the user's app.
-            ns_window.setIgnoresMouseEvents(true);
+        match overlay.ns_window() {
+            Ok(ns_ptr) => {
+                eprintln!("[whimpr] build_overlay: ns_window() succeeded, configuring NSWindow");
+                // Safety: ns_window() returns a valid NSWindow pointer on macOS.
+                let ns_window: &NSWindow = unsafe { &*(ns_ptr as *const NSWindow) };
+                // CanJoinAllSpaces (1 << 0) | FullScreenAuxiliary (1 << 8)
+                ns_window.setCollectionBehavior(
+                    objc2_app_kit::NSWindowCollectionBehavior(1 | (1 << 8)),
+                );
+                // NSStatusWindowLevel (25) floats above full-screen apps.
+                ns_window.setLevel(25);
+                // Let clicks pass through to the app underneath. The pill is
+                // a visual indicator only: dictation is driven by the Fn key,
+                // not by clicking the overlay. Without this, clicking the pill
+                // activates WhimprFlow and steals focus from the user's app.
+                ns_window.setIgnoresMouseEvents(true);
+                eprintln!("[whimpr] build_overlay: setIgnoresMouseEvents(true) applied");
+            }
+            Err(e) => {
+                eprintln!("[whimpr] build_overlay: ns_window() FAILED: {e} — overlay will steal focus!");
+            }
         }
     }
 
@@ -901,6 +976,7 @@ pub fn run() {
             position_overlay(&overlay);
             sync_pill_visibility(app.handle(), "idle");
             spawn_display_watcher(app.handle().clone());
+            spawn_hover_watcher(app.handle().clone());
 
             // Settings exist by now, so honour the saved Dock preference and keep
             // the login item in sync with it.

@@ -41,12 +41,12 @@ nick@whimprflow:~$ fn (hold) → "schedule the meeting for thursday at three"
 | 02 | **local LLM cleanup** | qwen 4B removes fillers, fixes "no wait" self-corrections, adds punctuation |
 | 03 | **cloud cleanup** | optional: openai, anthropic, or any compatible API for the cleanup pass |
 | 04 | **multi-language** | speak greek, get english text (or any of whisper's 99 languages) |
-| 05 | **floating pill** | always-on-top overlay, visible on all Spaces, hidden when idle |
+| 05 | **floating pill** | always-on-top overlay, visible on all Spaces, click-through with hover actions |
 | 06 | **push-to-talk** | configurable: fn, right cmd, right opt, right ctrl |
 | 07 | **auto-learn dictionary** | watches for one-word corrections after paste, learns names and terms |
 | 08 | **dark/light theming** | follows system or manual toggle, no flash on launch |
 | 09 | **dock toggle** | menu-bar-only mode or full dock app, your preference |
-| 10 | **shortcuts pane** | rebindable keyboard shortcuts with live conflict detection |
+| 10 | **shortcuts pane** | displays all keyboard shortcuts in one place |
 
 ## 🚀 Run it
 

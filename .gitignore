@@ -18,11 +18,12 @@ src-tauri/binaries/
 *.gguf
 *.bin
 
-# OS / editor
+# OS / editor / tooling
 .DS_Store
 *.swp
 .idea/
 .vscode/
+.playwright-mcp/
 
 # Secrets — never commit. API keys live in the OS keychain, never in files.
 .env
