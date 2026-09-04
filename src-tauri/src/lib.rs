@@ -581,8 +581,8 @@ fn get_stats(tz_offset_minutes: i32) -> whimpr_core::StatsSummary {
 
 /// Recent dictations for the Hub Home history list (newest first).
 #[tauri::command]
-fn get_history() -> Vec<whimpr_core::HistoryItem> {
-    hotkey::history(200)
+fn get_history(limit: Option<usize>) -> Vec<whimpr_core::HistoryItem> {
+    hotkey::history(limit.unwrap_or(200))
 }
 
 /// Export dictation history as JSON or plain text.

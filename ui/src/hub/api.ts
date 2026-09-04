@@ -6,31 +6,6 @@ export type CleanupMode = "raw" | "local" | "open_ai" | "anthropic";
 export type CleanupLevel = "none" | "light" | "medium" | "high";
 export type AsrMode = "local" | "cloud";
 
-// Mirrors whimpr-core's Key enum, serialized via serde's adjacently-tagged
-// representation: {"kind":"char","value":"V"} or {"kind":"escape"}.
-export type KeyJson = { kind: "char"; value: string } | { kind: "escape" };
-
-// Mirrors whimpr-core's Chord: one modifier combination bound to a rebindable
-// action (checked on a plain KeyDown, not a hold gesture).
-export interface ChordJson {
-  meta: boolean;
-  ctrl: boolean;
-  alt: boolean;
-  shift: boolean;
-  key: KeyJson;
-}
-
-// Mirrors whimpr-core's KeyBindings: the four shortcuts safe to rebind.
-export interface KeyBindings {
-  cancel: ChordJson;
-  paste_last: ChordJson;
-  copy_last: ChordJson;
-  undo_last: ChordJson;
-}
-
-// Mirrors whimpr-core's Formality enum.
-export type Formality = "casual" | "neutral" | "formal";
-
 export interface Settings {
   cleanup_mode: CleanupMode;
   cleanup_level: CleanupLevel;
@@ -68,8 +43,6 @@ export interface Settings {
   microphone: string;
   // Free-text style preferences appended to the cleanup prompt.
   style_instructions: string;
-  // The four rebindable shortcuts (cancel / paste / copy / undo last).
-  keybindings: KeyBindings;
 }
 
 export type PushToTalkKey = "fn" | "right_command" | "right_option" | "right_control";
@@ -100,15 +73,6 @@ export const LANGUAGES: { value: string; label: string }[] = [
   { value: "ru", label: "Russian" },
   { value: "auto", label: "Detect automatically" },
 ];
-
-// Browser-preview fallback only; the real app always loads the platform's actual
-// bindings from the backend. Mirrors whimpr-core's macOS default.
-export const DEFAULT_KEYBINDINGS: KeyBindings = {
-  cancel: { meta: false, ctrl: false, alt: false, shift: false, key: { kind: "escape" } },
-  paste_last: { meta: true, ctrl: false, alt: false, shift: true, key: { kind: "char", value: "V" } },
-  copy_last: { meta: true, ctrl: false, alt: false, shift: true, key: { kind: "char", value: "C" } },
-  undo_last: { meta: true, ctrl: false, alt: false, shift: true, key: { kind: "char", value: "Z" } },
-};
 
 export async function listMicrophones(): Promise<string[]> {
   try {
@@ -202,7 +166,6 @@ export const DEFAULT_SETTINGS: Settings = {
   show_in_dock: true,
   microphone: "",
   style_instructions: "",
-  keybindings: DEFAULT_KEYBINDINGS,
 };
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -332,7 +295,7 @@ export async function setApiKey(provider: "openai" | "anthropic", key: string): 
 export interface Provenance {
   // ASR engine + model, e.g. "whisper.cpp:ggml-base.en.bin".
   asr_engine: string;
-  // "raw" | "local" | "openai:<model>" | "anthropic:<model>" | "snippet" | "workflow:<name>"
+  // "raw" | "local" | "openai:<model>" | "anthropic:<model>"
   cleanup: string;
   sent_to_cloud: boolean;
   gate: "passed" | "rejected" | "skipped" | string;
@@ -406,94 +369,6 @@ export async function copyToClipboard(text: string): Promise<boolean> {
     } catch {
       return false;
     }
-  }
-}
-
-// ── Transforms ───────────────────────────────────────────────────────────────
-export interface Transform {
-  id: string;
-  name: string;
-  triggers: string[];
-  prompt: string;
-  enabled: boolean;
-}
-
-export async function getTransforms(): Promise<Transform[]> {
-  try {
-    return await invoke<Transform[]>("get_transforms");
-  } catch {
-    return [];
-  }
-}
-
-export async function setTransformEnabled(id: string, enabled: boolean): Promise<void> {
-  try {
-    await invoke<void>("set_transform_enabled", { id, enabled });
-  } catch {
-    /* browser preview */
-  }
-}
-
-// ── Snippets ─────────────────────────────────────────────────────────────────
-export interface Snippet {
-  trigger: string;
-  expansion: string;
-}
-
-export async function getSnippets(): Promise<Snippet[]> {
-  try {
-    return await invoke<Snippet[]>("get_snippets");
-  } catch {
-    return [];
-  }
-}
-
-export async function addSnippet(trigger: string, expansion: string): Promise<void> {
-  try {
-    await invoke<void>("add_snippet", { trigger, expansion });
-  } catch {
-    /* browser preview */
-  }
-}
-
-export async function removeSnippet(trigger: string): Promise<void> {
-  try {
-    await invoke<void>("remove_snippet", { trigger });
-  } catch {
-    /* browser preview */
-  }
-}
-
-// ── Scratchpad ───────────────────────────────────────────────────────────────
-export async function getScratchpad(): Promise<string> {
-  try {
-    return await invoke<string>("get_scratchpad");
-  } catch {
-    return "";
-  }
-}
-
-export async function setScratchpad(text: string): Promise<void> {
-  try {
-    await invoke<void>("set_scratchpad", { text });
-  } catch {
-    /* browser preview */
-  }
-}
-
-export async function getScratchpadCapture(): Promise<boolean> {
-  try {
-    return await invoke<boolean>("get_scratchpad_capture");
-  } catch {
-    return false;
-  }
-}
-
-export async function setScratchpadCapture(on: boolean): Promise<void> {
-  try {
-    await invoke<void>("set_scratchpad_capture", { on });
-  } catch {
-    /* browser preview */
   }
 }
 

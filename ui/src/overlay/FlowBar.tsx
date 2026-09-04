@@ -184,15 +184,6 @@ function GlobeIcon() {
   );
 }
 
-function NoteIcon() {
-  return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <path d="M5 3.5h14v12l-4.5 4.5H5z" strokeLinejoin="round" />
-      <path d="M19 15.5h-4.5V20" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 function RoundButton({
   children,
   onActivate,
@@ -239,7 +230,6 @@ export function FlowBar() {
   // ignoresMouseEvents so buttons are clickable while hovering.
   const [hover, setHover] = useState(false);
   const [language, setLanguage] = useState("en");
-  const [scratch, setScratch] = useState(false);
 
   // Read settings the action buttons display, refreshed each hover.
   useEffect(() => {
@@ -249,7 +239,6 @@ export function FlowBar() {
         const { invoke } = await import("@tauri-apps/api/core");
         const s = await invoke<{ language: string }>("get_settings");
         setLanguage(s.language);
-        setScratch(await invoke<boolean>("get_scratchpad_capture"));
       } catch { /* browser preview */ }
     })();
   }, [hover]);
@@ -263,15 +252,6 @@ export function FlowBar() {
       const next = LANG_CYCLE[(i + 1) % LANG_CYCLE.length];
       await invoke("set_settings", { settings: { ...s, language: next } });
       setLanguage(next);
-    } catch { /* browser preview */ }
-  }
-
-  async function toggleScratch() {
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      const next = !scratch;
-      await invoke("set_scratchpad_capture", { on: next });
-      setScratch(next);
     } catch { /* browser preview */ }
   }
 
@@ -437,9 +417,6 @@ export function FlowBar() {
         <div style={{ display: "flex", alignItems: "center", gap: 11, marginTop: 9, pointerEvents: "auto" }}>
           <RoundButton title={`Language: ${langLabel(language)}`} onActivate={() => void cycleLanguage()}>
             <GlobeIcon />
-          </RoundButton>
-          <RoundButton title={`Scratchpad: ${scratch ? "On" : "Off"}`} active={scratch} onActivate={() => void toggleScratch()}>
-            <NoteIcon />
           </RoundButton>
         </div>
       )}

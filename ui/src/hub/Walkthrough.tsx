@@ -8,7 +8,7 @@ const STORAGE_KEY = "whimpr:walkthrough-complete";
 
 const STEPS: { page: Page; eyebrow: string; title: string; body: string; icon: "mic" | "dictionary" | "settings" | "insights" }[] = [
   { page: "home", eyebrow: "01 / Speak anywhere", title: "Start with one hold.", body: "Hold Fn, talk naturally, and release when you are done. WhimprFlow transcribes and places the result at the active cursor.", icon: "mic" },
-  { page: "dictionary", eyebrow: "02 / Make it yours", title: "Teach it the words that matter.", body: "Use Dictionary for names, acronyms, and domain terms. Snippets give repeat phrases a fast spoken shortcut.", icon: "dictionary" },
+  { page: "dictionary", eyebrow: "02 / Make it yours", title: "Teach it the words that matter.", body: "Use Dictionary for names, acronyms, and domain terms so WhimprFlow always gets them right.", icon: "dictionary" },
   { page: "settings", eyebrow: "03 / Stay in control", title: "Choose how text is cleaned.", body: "Pick raw, local, or cloud cleanup, tune the editing level, and enable Safe Mode when you want curse words redacted.", icon: "settings" },
   { page: "insights", eyebrow: "04 / Watch your momentum", title: "See your voice at work.", body: "Insights turns local activity into pace, consistency, time-saved, and speaking trend views.", icon: "insights" },
 ];

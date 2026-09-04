@@ -7,11 +7,7 @@ export type Page =
   | "home"
   | "insights"
   | "dictionary"
-  | "snippets"
   | "style"
-  | "transforms"
-  | "scratchpad"
-  | "shortcuts"
   | "settings"
   | "help";
 
@@ -21,14 +17,10 @@ const MAIN: NavDef[] = [
   { key: "home", label: "Home", icon: "home" },
   { key: "insights", label: "Insights", icon: "insights" },
   { key: "dictionary", label: "Dictionary", icon: "dictionary" },
-  { key: "snippets", label: "Snippets", icon: "snippets" },
   { key: "style", label: "Style", icon: "style" },
-  { key: "transforms", label: "Transforms", icon: "transforms" },
-  { key: "scratchpad", label: "Scratchpad", icon: "scratchpad" },
 ];
 
 const BOTTOM: NavDef[] = [
-  { key: "shortcuts", label: "Shortcuts", icon: "shortcuts" },
   { key: "settings", label: "Settings", icon: "settings" },
   { key: "help", label: "Help", icon: "help" },
 ];

@@ -253,11 +253,31 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// Load settings from disk. If the file is missing, returns defaults and
+    /// writes them. If the file exists but is corrupt, returns defaults but
+    /// does NOT overwrite the broken file (so the user can fix or recover it).
     pub fn load(path: &Path) -> Self {
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+        let content = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => {
+                // File missing or unreadable: first launch or permissions issue.
+                let defaults = Self::default();
+                let _ = defaults.save(path);
+                return defaults;
+            }
+        };
+        match serde_json::from_str(&content) {
+            Ok(settings) => settings,
+            Err(e) => {
+                eprintln!(
+                    "[whimpr] settings.json is corrupt ({}), using defaults. \
+                     The broken file was NOT overwritten, fix or delete it manually: {}",
+                    e,
+                    path.display()
+                );
+                Self::default()
+            }
+        }
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {

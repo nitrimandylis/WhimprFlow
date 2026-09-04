@@ -7,14 +7,9 @@ import { Home } from "./Home";
 import { Insights } from "./Insights";
 import { DictionaryPane } from "./DictionaryPane";
 import { SettingsPane } from "./SettingsPane";
-import { SnippetsPane } from "./SnippetsPane";
-import { ScratchpadPane } from "./ScratchpadPane";
-import { TransformsPane } from "./TransformsPane";
 import { StylePane } from "./StylePane";
-import { ShortcutsPane } from "./ShortcutsPane";
 import { Help } from "./Help";
 import { Walkthrough, shouldShowWalkthrough } from "./Walkthrough";
-import { KeyboardCheatsheet } from "./KeyboardCheatsheet";
 import { gsap, prefersReduced, EASE } from "./anim";
 import {
   getSettings,
@@ -140,7 +135,6 @@ export function App() {
     }
   });
   const [showWalkthrough, setShowWalkthrough] = useState(shouldShowWalkthrough);
-  const [cheatsheet, setCheatsheet] = useState(false);
   const [settings, setLocalSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [entered, setEntered] = useState(() => {
     try { return localStorage.getItem("whimpr_onboarding_done") === "1"; } catch { return false; }
@@ -255,22 +249,6 @@ export function App() {
     return () => unlisten?.();
   }, []);
 
-  // "?" (or Shift+/) opens the keyboard shortcuts cheatsheet, unless the
-  // reader is typing in a field.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      const tag = t?.tagName?.toLowerCase();
-      if (tag === "input" || tag === "textarea" || t?.isContentEditable) return;
-      if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
-        e.preventDefault();
-        setCheatsheet(true);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
   // Each keystroke in a settings text field calls update(); saving on every one
   // fired overlapping, unawaited Tauri calls (each doing a keyring lookup + HTTP
   // client rebuild) with no ordering guarantee, so a fast typist could have an
@@ -350,11 +328,7 @@ export function App() {
               {page === "home" && <Home />}
               {page === "insights" && <Insights />}
               {page === "dictionary" && <DictionaryPane />}
-              {page === "snippets" && <SnippetsPane />}
-              {page === "scratchpad" && <ScratchpadPane />}
-              {page === "transforms" && <TransformsPane />}
               {page === "style" && <StylePane settings={settings} onChange={update} />}
-              {page === "shortcuts" && <ShortcutsPane settings={settings} onChange={update} />}
               {page === "settings" && (
                 <SettingsPane settings={settings} onChange={update} status={status} refresh={refresh} />
               )}
@@ -364,7 +338,6 @@ export function App() {
         </main>
       </div>
       {showWalkthrough && <Walkthrough setPage={setPage} onComplete={() => setShowWalkthrough(false)} />}
-      <KeyboardCheatsheet open={cheatsheet} onClose={() => setCheatsheet(false)} setPage={setPage} />
     </div>
   );
 }

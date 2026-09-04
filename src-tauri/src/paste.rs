@@ -235,6 +235,9 @@ mod imp {
             ));
         }
         let mut cb = Clipboard::new()?;
+        // ponytail: only text is saved/restored. If the user had an image or
+        // file on the clipboard, it gets replaced. Full NSPasteboard save/restore
+        // (all types) needs raw ObjC FFI; add if users report losing clipboard images.
         let saved = cb.get_text().ok();
         cb.set_text(text.to_string())?;
         // Give the pasteboard a moment to settle before the paste keystroke.
