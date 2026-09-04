@@ -3,6 +3,9 @@
 packages:
   - .
 
+allowBuilds:
+  esbuild: true
+
 # esbuild ships a postinstall that fetches its platform binary; without this it
 # is skipped and vite build dies on a missing binary. NOTE: this alone does not
 # always prevent pnpm's [ERR_PNPM_IGNORED_BUILDS] prompt on a machine whose

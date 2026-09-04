@@ -3,15 +3,55 @@ import { font } from "../tokens/values";
 import { theme } from "./theme";
 import { Button, Card, Dot, PageTitle, Segmented } from "./ui";
 import {
+  LANGUAGES,
+  listMicrophones,
+  PTT_KEYS,
   requestAccessibility,
   requestInputMonitoring,
   requestMicrophone,
+  resetPillPosition,
   setApiKey,
   type CleanupLevel,
   type CleanupMode,
+  type PushToTalkKey,
   type Settings,
   type Status,
 } from "./api";
+
+const selectStyle: React.CSSProperties = {
+  fontFamily: font.ui,
+  fontSize: 13.5,
+  color: theme.textBody,
+  background: theme.cardBgSubtle,
+  border: `1px solid ${theme.borderStrong}`,
+  borderRadius: 9,
+  padding: "7px 10px",
+  minWidth: 210,
+  cursor: "pointer",
+};
+
+/// A labelled settings row: title + explanatory hint on the left, control right.
+function Row({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+      <div style={{ fontSize: 14, fontWeight: 600, color: theme.textStrong }}>
+        {title}
+        <div style={{ fontSize: 12, fontWeight: 400, color: theme.textMuted, marginTop: 2 }}>
+          {hint}
+        </div>
+      </div>
+      {children}
+    </div>
+  );
+}
 
 const MODES: { value: CleanupMode; label: string; hint: string }[] = [
   { value: "raw", label: "Raw", hint: "Paste exactly what you said" },
@@ -234,6 +274,11 @@ export function SettingsPane({
   status: Status;
   refresh: () => void;
 }) {
+  const [mics, setMics] = useState<string[]>([]);
+  useEffect(() => {
+    void listMicrophones().then(setMics);
+  }, []);
+
   return (
     <div style={{ maxWidth: 720 }}>
       <PageTitle>Settings</PageTitle>
@@ -346,7 +391,11 @@ export function SettingsPane({
       <Card style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <div style={{ fontSize: 14, fontWeight: 600, color: theme.textStrong }}>
-            Play a sound when recording starts
+            Dictation sounds
+            <div style={{ fontSize: 12, fontWeight: 400, color: theme.textMuted, marginTop: 2 }}>
+              A soft click when recording starts, a lighter one when the text lands, and a duller
+              one if you cancel.
+            </div>
           </div>
           <Segmented
             options={[
@@ -363,6 +412,182 @@ export function SettingsPane({
         value={settings.hands_free_hotkey ?? ""}
         onChange={(accelerator) => onChange({ ...settings, hands_free_hotkey: accelerator })}
       />
+
+      <Card style={{ marginBottom: 16 }}>
+        <SectionTitle sub="How you start a dictation and what WhimprFlow listens to.">
+          Dictation
+        </SectionTitle>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <Row
+            title="Push-to-talk key"
+            hint="Hold this key to dictate. Only modifier keys can be used — they are the ones the key tap can see without intercepting your typing."
+          >
+            <select
+              value={settings.push_to_talk_key}
+              onChange={(e) =>
+                onChange({ ...settings, push_to_talk_key: e.currentTarget.value as PushToTalkKey })
+              }
+              style={selectStyle}
+            >
+              {PTT_KEYS.map((k) => (
+                <option key={k.value} value={k.value}>
+                  {k.label}
+                </option>
+              ))}
+            </select>
+          </Row>
+
+          <Row
+            title="Language"
+            hint="Needs a multilingual model. ggml-large-v3-turbo is multilingual; any model ending in .en is English-only and ignores this."
+          >
+            <select
+              value={settings.language}
+              onChange={(e) => onChange({ ...settings, language: e.currentTarget.value })}
+              style={selectStyle}
+            >
+              {LANGUAGES.map((l) => (
+                <option key={l.value} value={l.value}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+          </Row>
+
+          <Row title="Microphone" hint="Falls back to the system default if the chosen device is unplugged.">
+            <select
+              value={settings.microphone}
+              onChange={(e) => onChange({ ...settings, microphone: e.currentTarget.value })}
+              style={selectStyle}
+            >
+              <option value="">System default</option>
+              {mics.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </Row>
+        </div>
+      </Card>
+
+      <Card style={{ marginBottom: 16 }}>
+        <SectionTitle sub="How WhimprFlow behaves as a Mac app.">System</SectionTitle>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <Row title="Launch at login" hint="Starts WhimprFlow automatically when you log in.">
+            <Segmented
+              options={[
+                { value: "on", label: "On" },
+                { value: "off", label: "Off" },
+              ]}
+              value={settings.launch_at_login ? "on" : "off"}
+              onChange={(v) => onChange({ ...settings, launch_at_login: v === "on" })}
+            />
+          </Row>
+          <Row title="Show in Dock" hint="Off makes WhimprFlow a menu-bar-only app.">
+            <Segmented
+              options={[
+                { value: "on", label: "On" },
+                { value: "off", label: "Off" },
+              ]}
+              value={settings.show_in_dock ? "on" : "off"}
+              onChange={(v) => onChange({ ...settings, show_in_dock: v === "on" })}
+            />
+          </Row>
+        </div>
+      </Card>
+
+      <Card style={{ marginBottom: 16 }}>
+        <SectionTitle sub="The Flow Bar is the small pill that shows idle / recording / cleaning up. Drag it anywhere; drop it back near the bottom centre to re-anchor.">
+          Flow Bar
+        </SectionTitle>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: theme.textStrong }}>
+              Show the Flow Bar at all times
+              <div style={{ fontSize: 12, fontWeight: 400, color: theme.textMuted, marginTop: 2 }}>
+                Off hides the pill until you start dictating.
+              </div>
+            </div>
+            <Segmented
+              options={[
+                { value: "on", label: "On" },
+                { value: "off", label: "Off" },
+              ]}
+              value={settings.show_pill_always ? "on" : "off"}
+              onChange={(v) => onChange({ ...settings, show_pill_always: v === "on" })}
+            />
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: theme.textStrong }}>
+              Follow the active display
+              <div style={{ fontSize: 12, fontWeight: 400, color: theme.textMuted, marginTop: 2 }}>
+                Put the pill on the screen you're working on instead of the primary one.
+              </div>
+            </div>
+            <Segmented
+              options={[
+                { value: "on", label: "On" },
+                { value: "off", label: "Off" },
+              ]}
+              value={settings.pill_follows_active_display ? "on" : "off"}
+              onChange={(v) =>
+                onChange({ ...settings, pill_follows_active_display: v === "on" })
+              }
+            />
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: theme.textStrong }}>
+              Gap above the Dock
+              <div style={{ fontSize: 12, fontWeight: 400, color: theme.textMuted, marginTop: 2 }}>
+                Measured from the top of the Dock, not the screen edge. Currently{" "}
+                {Math.round(settings.pill_bottom_inset)} pt.
+              </div>
+            </div>
+            <input
+              type="range"
+              min={16}
+              max={220}
+              step={4}
+              value={settings.pill_bottom_inset}
+              onChange={(e) =>
+                onChange({ ...settings, pill_bottom_inset: Number(e.currentTarget.value) })
+              }
+              style={{ width: 180, accentColor: theme.accent }}
+            />
+          </div>
+
+          {settings.pill_pos && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div style={{ fontSize: 13, color: theme.textMuted }}>
+                The pill is pinned where you dragged it, so the settings above are paused.
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  void resetPillPosition();
+                  onChange({ ...settings, pill_pos: null });
+                }}
+                style={{
+                  cursor: "pointer",
+                  border: `1px solid ${theme.borderStrong}`,
+                  background: "transparent",
+                  color: theme.textBody,
+                  borderRadius: 8,
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  padding: "6px 12px",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Reset position
+              </button>
+            </div>
+          )}
+        </div>
+      </Card>
 
       <Card>
         <SectionTitle sub="Grant these to WhimprFlow — dots update automatically within a few seconds.">

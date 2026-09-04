@@ -6,6 +6,25 @@ A **local-first, cross-platform voice dictation app** — hold a key, speak, and
 
 ---
 
+## About this fork
+
+This is a fork of [`Blueturboguy07/WhimprFlow`](https://github.com/Blueturboguy07/WhimprFlow)
+with the overlay reworked, the four placeholder screens implemented, and a
+number of settings that existed in the UI but were never wired to anything.
+
+**Headlines:** multi-language dictation · configurable push-to-talk key · working
+Flow Bar buttons and hover controls · correct pill placement on multi-monitor and
+mixed-DPI setups · Snippets · Transforms · Style · Scratchpad · copy-from-history
+· launch at login · audio cues · a self-contained app bundle.
+
+Full detail, including what was broken and why, is in **[CHANGELOG-FORK.md](CHANGELOG-FORK.md)**.
+
+**Scope:** macOS on Apple Silicon. `src-tauri/src/win.rs` has not been updated and
+is missing the functions added here, so the Windows target will not build without
+further work.
+
+---
+
 ## Platform status
 
 | Platform | Status |

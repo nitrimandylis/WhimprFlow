@@ -5,12 +5,17 @@ import {
   requestAccessibility,
   requestMicrophone,
   requestInputMonitoring,
+  restartApp,
   type Status,
 } from "./api";
 
-// A blocking permission gate: the app can't be used until Accessibility and
-// Microphone are granted. The three permissions are presented in order (each
-// unlocks the next), and their state flips live as macOS applies them.
+// The permission gate. The three permissions are presented in order (each
+// unlocks the next), and their state polls live.
+//
+// It is deliberately NOT a hard block any more: the Hub's Settings, Dictionary
+// and history are useful with no permissions at all, and trapping the user on
+// this screen when macOS is being stubborn (see the relaunch note below) left
+// the rest of the app unreachable.
 
 function Step({
   n,
@@ -163,8 +168,10 @@ export function Onboarding({
           </span>
         </div>
         <p style={{ color: theme.textMuted, lineHeight: 1.5, margin: "0 0 24px" }}>
-          Grant these to <b>WhimprFlow</b>, in order. Each turns green here the moment macOS applies
-          it — no relaunch needed.
+          Grant these to <b>WhimprFlow</b>, in order. Accessibility turns green here as soon as macOS
+          applies it. <b>Microphone usually needs a relaunch</b> — macOS decides an app's microphone
+          status when it starts and doesn't revisit it, so use Quit &amp; Reopen below after flipping
+          that one on.
         </p>
 
         <Step
@@ -222,9 +229,50 @@ export function Onboarding({
           {canEnter ? "Enter WhimprFlow →" : "Grant Accessibility + Microphone to continue"}
         </button>
 
+        <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+          <button
+            onClick={() => void restartApp()}
+            style={{
+              flex: 1,
+              cursor: "pointer",
+              border: `1px solid ${theme.borderStrong}`,
+              borderRadius: 12,
+              padding: "11px",
+              fontSize: 13.5,
+              fontWeight: 600,
+              fontFamily: font.ui,
+              color: theme.textBody,
+              background: "transparent",
+            }}
+          >
+            Quit &amp; Reopen
+          </button>
+          {/* Always available. A permission problem should never make the rest of
+              the app unreachable — Settings, Dictionary and history all work
+              without any grant at all. */}
+          <button
+            onClick={onEnter}
+            style={{
+              flex: 1,
+              cursor: "pointer",
+              border: `1px solid ${theme.borderStrong}`,
+              borderRadius: 12,
+              padding: "11px",
+              fontSize: 13.5,
+              fontWeight: 600,
+              fontFamily: font.ui,
+              color: theme.textBody,
+              background: "transparent",
+            }}
+          >
+            Skip for now →
+          </button>
+        </div>
+
         <p style={{ fontSize: 12, color: theme.textFaint, lineHeight: 1.5, marginTop: 16 }}>
-          If a permission stays grey after you flip it on in System Settings, toggle WhimprFlow off
-          and back on in that pane — the state here will update within a second.
+          If a permission stays grey after you flip it on in System Settings, the entry there is
+          probably bound to an older build of the app. Remove WhimprFlow from that pane with the “−”
+          button, then grant it again.
         </p>
       </div>
     </div>

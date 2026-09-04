@@ -3,7 +3,7 @@ import { font, palette } from "../tokens/values";
 import { theme } from "./theme";
 import { Card, useStats } from "./ui";
 import { Icon } from "./icons";
-import { getHistory, type HistoryItem, type StatsSummary } from "./api";
+import { copyToClipboard, getHistory, type HistoryItem, type StatsSummary } from "./api";
 import { dayKey, dayLabel, fmtCompact, fmtDuration, fmtNum, fmtTimeOfDay, wordsReference } from "./format";
 
 const UNLOCK_WORDS = 500;
@@ -79,8 +79,28 @@ function groupByDay(items: HistoryItem[]): Group[] {
 
 function HistoryRow({ item }: { item: HistoryItem }) {
   const d = new Date(item.ts_unix * 1000);
+  const [hover, setHover] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  async function onCopy() {
+    const ok = await copyToClipboard(item.text);
+    if (!ok) return;
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1400);
+  }
+
   return (
-    <div style={{ display: "flex", gap: 14, padding: "11px 4px", borderBottom: `1px solid ${theme.border}` }}>
+    <div
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: "flex",
+        gap: 14,
+        padding: "11px 4px",
+        borderBottom: `1px solid ${theme.border}`,
+        position: "relative",
+      }}
+    >
       <div
         style={{
           flex: "0 0 74px",
@@ -93,10 +113,39 @@ function HistoryRow({ item }: { item: HistoryItem }) {
         {fmtTimeOfDay(d)}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13.5, lineHeight: 1.5, color: theme.textBody }}>{item.text}</div>
+        {/* Selectable so a dictation that landed in the wrong place can still be
+            grabbed by hand, not just via the button. */}
+        <div style={{ fontSize: 13.5, lineHeight: 1.5, color: theme.textBody, userSelect: "text" }}>
+          {item.text}
+        </div>
         {item.app && (
           <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 3 }}>{item.app}</div>
         )}
+      </div>
+      {/* Reserve the gutter always so rows don't reflow on hover. */}
+      <div style={{ flex: "0 0 62px", display: "flex", justifyContent: "flex-end", alignItems: "flex-start" }}>
+        <button
+          type="button"
+          onClick={onCopy}
+          aria-label={copied ? "Copied" : "Copy dictation"}
+          title={copied ? "Copied" : "Copy"}
+          style={{
+            opacity: hover || copied ? 1 : 0,
+            transition: "opacity 120ms ease",
+            cursor: "pointer",
+            border: `1px solid ${copied ? theme.accentSoftBorder : theme.border}`,
+            background: copied ? theme.accentSoft : "transparent",
+            color: copied ? theme.accentDeep : theme.textFaint,
+            borderRadius: 7,
+            fontSize: 11,
+            fontWeight: 600,
+            padding: "3px 8px",
+            lineHeight: 1.5,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
       </div>
     </div>
   );
