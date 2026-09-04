@@ -40,16 +40,29 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2" --locked
 
+      - name: Build frontend
+        working-directory: ui
+        run: pnpm run build
+
       - name: Build app + DMG
-        # cargo tauri build runs beforeBuildCommand (pnpm build),
-        # compiles Rust, and bundles .app + .dmg per tauri.conf.json
-        run: cargo tauri build --target aarch64-apple-darwin 2>&1 | tail -50
+        # Frontend is pre-built above; skip beforeBuildCommand to avoid
+        # the pnpm --dir path resolution issue on CI.
+        run: |
+          cd src-tauri
+          cargo tauri build --target aarch64-apple-darwin --config '{"build":{"beforeBuildCommand":""}}'
+
+      - name: Find artifacts
+        if: always()
+        run: find target -name "*.dmg" -o -name "*.app" -type d | head -20
 
       - name: Upload DMG
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: WhimprFlow-macOS-arm64
-          path: target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          path: |
+            target/**/release/bundle/dmg/*.dmg
+            target/**/bundle/dmg/*.dmg
           if-no-files-found: warn
 
       - name: Upload .app fallback
@@ -57,5 +70,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: WhimprFlow-app-bundle
-          path: target/aarch64-apple-darwin/release/bundle/macos/*.app
+          path: |
+            target/**/release/bundle/macos/*.app
+            target/**/bundle/macos/*.app
           if-no-files-found: warn
