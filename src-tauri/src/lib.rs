@@ -473,9 +473,12 @@ fn build_overlay(app: &tauri::App) -> tauri::Result<WebviewWindow> {
                 objc2_app_kit::NSWindowCollectionBehavior(1 | (1 << 8)),
             );
             // NSStatusWindowLevel (25) floats above full-screen apps.
-            // Tauri's always_on_top uses NSFloatingWindowLevel (3), which
-            // sits below full-screen windows.
             ns_window.setLevel(25);
+            // Let clicks pass through to the app underneath. The pill is
+            // a visual indicator only: dictation is driven by the Fn key,
+            // not by clicking the overlay. Without this, clicking the pill
+            // activates WhimprFlow and steals focus from the user's app.
+            ns_window.setIgnoresMouseEvents(true);
         }
     }
 
