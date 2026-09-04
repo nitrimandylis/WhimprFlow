@@ -67,7 +67,7 @@ export function Button({
   const pad = size === "sm" ? "6px 12px" : "9px 16px";
   const fontSize = size === "sm" ? 12.5 : 13.5;
   const palettes: Record<string, CSSProperties> = {
-    dark: { background: disabled ? theme.textFaint : palette.slate900, color: "#fff", border: "none" },
+    dark: { background: disabled ? theme.textFaint : theme.solidBg, color: theme.solidText, border: "none" },
     accent: { background: disabled ? theme.textFaint : theme.accentDeep, color: "#fff", border: "none" },
     ghost: {
       background: "transparent",

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { font, palette } from "../tokens/values";
 import { theme } from "./theme";
 import { Onboarding } from "./Onboarding";
@@ -11,8 +11,12 @@ import { SnippetsPane } from "./SnippetsPane";
 import { ScratchpadPane } from "./ScratchpadPane";
 import { TransformsPane } from "./TransformsPane";
 import { StylePane } from "./StylePane";
+import { ShortcutsPane } from "./ShortcutsPane";
 import { Help } from "./Help";
 import { ComingSoon } from "./ComingSoon";
+import { Walkthrough, shouldShowWalkthrough } from "./Walkthrough";
+import { KeyboardCheatsheet } from "./KeyboardCheatsheet";
+import { gsap, prefersReduced, EASE } from "./anim";
 import type { IconName } from "./icons";
 import {
   getSettings,
@@ -105,11 +109,44 @@ function ErrorBanner({
   );
 }
 
+// Wraps the routed pane. Remounted per navigation (key={page}), so each page
+// arrival plays a GSAP enter-cascade: the pane's own sections stagger up. Home
+// runs its own richer timeline, so it opts out here.
+function RoutedPage({ page, children }: { page: Page; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    if (page === "home" || prefersReduced() || document.hidden || !ref.current) return;
+    const ctx = gsap.context(() => {
+      const root = ref.current?.firstElementChild;
+      const targets = root && root.children.length > 1 ? root.children : ref.current?.children;
+      gsap.from(targets as Element[] | HTMLCollection, {
+        opacity: 0,
+        y: 22,
+        duration: 0.6,
+        ease: EASE,
+        stagger: 0.07,
+        clearProps: "transform,opacity",
+      });
+    }, ref);
+    return () => ctx.revert();
+  }, [page]);
+  return <div ref={ref}>{children}</div>;
+}
+
 // Every screen is built now; kept so a future stub has somewhere to live.
 const SOON: Partial<Record<Page, { icon: IconName; title: string; desc: string }>> = {};
 
 export function App() {
   const [page, setPage] = useState<Page>("home");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("whimpr:sidebar-collapsed") === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [showWalkthrough, setShowWalkthrough] = useState(shouldShowWalkthrough);
+  const [cheatsheet, setCheatsheet] = useState(false);
   const [settings, setLocalSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [entered, setEntered] = useState(() => {
     try { return localStorage.getItem("whimpr_onboarding_done") === "1"; } catch { return false; }
@@ -121,6 +158,15 @@ export function App() {
   const markEntered = () => {
     try { localStorage.setItem("whimpr_onboarding_done", "1"); } catch { /* ignore */ }
     setEntered(true);
+  };
+
+  const setCollapsed = (collapsed: boolean) => {
+    setSidebarCollapsed(collapsed);
+    try {
+      localStorage.setItem("whimpr:sidebar-collapsed", String(collapsed));
+    } catch {
+      // The state remains usable when browser storage is unavailable.
+    }
   };
 
   // Stable across renders. It used to be rebuilt on every render, which tore
@@ -215,6 +261,22 @@ export function App() {
     return () => unlisten?.();
   }, []);
 
+  // "?" (or Shift+/) opens the keyboard shortcuts cheatsheet, unless the
+  // reader is typing in a field.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const tag = t?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || t?.isContentEditable) return;
+      if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
+        e.preventDefault();
+        setCheatsheet(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // Each keystroke in a settings text field calls update(); saving on every one
   // fired overlapping, unawaited Tauri calls (each doing a keyring lookup + HTTP
   // client rebuild) with no ordering guarantee, so a fast typist could have an
@@ -289,24 +351,29 @@ export function App() {
         />
       )}
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-        <Sidebar page={page} setPage={setPage} />
+        <Sidebar page={page} setPage={setPage} collapsed={sidebarCollapsed} onCollapsedChange={setCollapsed} />
         <main style={{ flex: 1, minWidth: 0, overflowY: "auto" }}>
           <div style={{ padding: "36px 44px", margin: "0 auto", maxWidth: 1120 }}>
-            {page === "home" && <Home />}
-            {page === "insights" && <Insights />}
-            {page === "dictionary" && <DictionaryPane />}
-            {page === "snippets" && <SnippetsPane />}
-            {page === "scratchpad" && <ScratchpadPane />}
-            {page === "transforms" && <TransformsPane />}
-            {page === "style" && <StylePane settings={settings} onChange={update} />}
-            {page === "settings" && (
-              <SettingsPane settings={settings} onChange={update} status={status} refresh={refresh} />
-            )}
-            {page === "help" && <Help />}
-            {soon && <ComingSoon icon={soon.icon} title={soon.title} desc={soon.desc} />}
+            <RoutedPage key={page} page={page}>
+              {page === "home" && <Home />}
+              {page === "insights" && <Insights />}
+              {page === "dictionary" && <DictionaryPane />}
+              {page === "snippets" && <SnippetsPane />}
+              {page === "scratchpad" && <ScratchpadPane />}
+              {page === "transforms" && <TransformsPane />}
+              {page === "style" && <StylePane settings={settings} onChange={update} />}
+              {page === "shortcuts" && <ShortcutsPane settings={settings} onChange={update} />}
+              {page === "settings" && (
+                <SettingsPane settings={settings} onChange={update} status={status} refresh={refresh} />
+              )}
+              {page === "help" && <Help />}
+              {soon && <ComingSoon icon={soon.icon} title={soon.title} desc={soon.desc} />}
+            </RoutedPage>
           </div>
         </main>
       </div>
+      {showWalkthrough && <Walkthrough setPage={setPage} onComplete={() => setShowWalkthrough(false)} />}
+      <KeyboardCheatsheet open={cheatsheet} onClose={() => setCheatsheet(false)} setPage={setPage} />
     </div>
   );
 }

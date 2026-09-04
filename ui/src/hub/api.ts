@@ -6,6 +6,31 @@ export type CleanupMode = "raw" | "local" | "open_ai" | "anthropic";
 export type CleanupLevel = "none" | "light" | "medium" | "high";
 export type AsrMode = "local" | "cloud";
 
+// Mirrors whimpr-core's Key enum, serialized via serde's adjacently-tagged
+// representation: {"kind":"char","value":"V"} or {"kind":"escape"}.
+export type KeyJson = { kind: "char"; value: string } | { kind: "escape" };
+
+// Mirrors whimpr-core's Chord: one modifier combination bound to a rebindable
+// action (checked on a plain KeyDown, not a hold gesture).
+export interface ChordJson {
+  meta: boolean;
+  ctrl: boolean;
+  alt: boolean;
+  shift: boolean;
+  key: KeyJson;
+}
+
+// Mirrors whimpr-core's KeyBindings: the four shortcuts safe to rebind.
+export interface KeyBindings {
+  cancel: ChordJson;
+  paste_last: ChordJson;
+  copy_last: ChordJson;
+  undo_last: ChordJson;
+}
+
+// Mirrors whimpr-core's Formality enum.
+export type Formality = "casual" | "neutral" | "formal";
+
 export interface Settings {
   cleanup_mode: CleanupMode;
   cleanup_level: CleanupLevel;
@@ -43,6 +68,8 @@ export interface Settings {
   microphone: string;
   // Free-text style preferences appended to the cleanup prompt.
   style_instructions: string;
+  // The four rebindable shortcuts (cancel / paste / copy / undo last).
+  keybindings: KeyBindings;
 }
 
 export type PushToTalkKey = "fn" | "right_command" | "right_option" | "right_control";
@@ -73,6 +100,23 @@ export const LANGUAGES: { value: string; label: string }[] = [
   { value: "ru", label: "Russian" },
   { value: "auto", label: "Detect automatically" },
 ];
+
+// Browser-preview fallback only; the real app always loads the platform's actual
+// bindings from the backend. Mirrors whimpr-core's macOS default.
+export const DEFAULT_KEYBINDINGS: KeyBindings = {
+  cancel: { meta: false, ctrl: false, alt: false, shift: false, key: { kind: "escape" } },
+  paste_last: { meta: true, ctrl: false, alt: false, shift: true, key: { kind: "char", value: "V" } },
+  copy_last: { meta: true, ctrl: false, alt: false, shift: true, key: { kind: "char", value: "C" } },
+  undo_last: { meta: true, ctrl: false, alt: false, shift: true, key: { kind: "char", value: "Z" } },
+};
+
+export async function getKeybindings(): Promise<KeyBindings> {
+  try {
+    return await invoke<KeyBindings>("get_keybindings");
+  } catch {
+    return DEFAULT_KEYBINDINGS;
+  }
+}
 
 export async function listMicrophones(): Promise<string[]> {
   try {
@@ -166,6 +210,7 @@ export const DEFAULT_SETTINGS: Settings = {
   show_in_dock: true,
   microphone: "",
   style_instructions: "",
+  keybindings: DEFAULT_KEYBINDINGS,
 };
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -291,19 +336,39 @@ export async function setApiKey(provider: "openai" | "anthropic", key: string): 
 }
 
 // ── History ────────────────────────────────────────────────────────────────
+// Mirrors whimpr-core's Provenance: where a dictation's text came from.
+export interface Provenance {
+  // ASR engine + model, e.g. "whisper.cpp:ggml-base.en.bin".
+  asr_engine: string;
+  // "raw" | "local" | "openai:<model>" | "anthropic:<model>" | "snippet" | "workflow:<name>"
+  cleanup: string;
+  sent_to_cloud: boolean;
+  gate: "passed" | "rejected" | "skipped" | string;
+}
+
 export interface HistoryItem {
   ts_unix: number;
   text: string;
   app: string | null;
   words: number;
+  // Raw (pre-cleanup) transcript, for the raw-vs-final diff view. Optional —
+  // older backend builds don't send it.
+  raw?: string;
+  provenance?: Provenance;
+  confidence?: number | null;
+  low_words?: string[];
 }
 
-export async function getHistory(): Promise<HistoryItem[]> {
+export async function getHistory(limit?: number): Promise<HistoryItem[]> {
   try {
-    return await invoke<HistoryItem[]>("get_history");
+    return await invoke<HistoryItem[]>("get_history", { limit });
   } catch {
     return [];
   }
+}
+
+export async function exportHistory(format: "json" | "txt"): Promise<string> {
+  return invoke<string>("export_history", { format });
 }
 
 /// Quit and relaunch. macOS fixes an app's microphone authorisation at launch,
@@ -469,5 +534,117 @@ export async function removeDictionaryEntry(correct: string): Promise<void> {
   } catch {
     /* browser preview — no-op */
   }
+}
+
+// ── Health ───────────────────────────────────────────────────────────────────
+// Is dictation actually ready end to end (ASR model, local LLM, mic +
+// accessibility permissions). Mirrors the shell's hotkey::Health.
+export interface Health {
+  asr_ready: boolean;
+  asr_model: string | null;
+  local_llm_ready: boolean;
+  microphone: boolean;
+  accessibility: boolean;
+}
+
+export async function getHealth(): Promise<Health> {
+  try {
+    return await invoke<Health>("get_health");
+  } catch {
+    return {
+      asr_ready: false,
+      asr_model: null,
+      local_llm_ready: false,
+      microphone: false,
+      accessibility: false,
+    };
+  }
+}
+
+export interface ModelProgress {
+  file_name: string;
+  downloaded: number;
+  total: number;
+}
+
+/** Download recommended Whisper model; listen to `whimpr://model/progress` for bytes. */
+export async function downloadAsrModel(modelId?: string): Promise<string> {
+  return invoke<string>("download_asr_model", { modelId: modelId ?? null });
+}
+
+export async function reloadAsr(): Promise<void> {
+  try {
+    await invoke("reload_asr");
+  } catch (e) {
+    console.error("reloadAsr failed", e);
+  }
+}
+
+export interface BuildInfo {
+  version: string;
+  git_hash: string;
+}
+
+export async function getBuildInfo(): Promise<BuildInfo> {
+  try {
+    return await invoke<BuildInfo>("get_build_info");
+  } catch {
+    return { version: "1.0.0", git_hash: "dev" };
+  }
+}
+
+export async function exportDiagnostics(): Promise<string> {
+  return invoke<string>("export_diagnostics");
+}
+
+export async function checkNetwork(): Promise<boolean> {
+  try {
+    return await invoke<boolean>("check_network");
+  } catch {
+    return true;
+  }
+}
+
+// ── Shell events ─────────────────────────────────────────────────────────────
+// Mirrors src-tauri's payload structs. The overlay pill and the Hub both
+// subscribe to these.
+export const EVENT_TRANSCRIPT_PARTIAL = "whimpr://transcript/partial";
+export const EVENT_RECEIPT = "whimpr://receipt";
+
+// Live provisional text while recording (streaming preview).
+export interface PartialTranscriptEvent {
+  text: string;
+}
+
+export type ReceiptAction = "pasted" | "noted" | "clipboard" | "pending" | "error";
+
+// The insertion receipt emitted after every finalize.
+export interface ReceiptEvent {
+  ok: boolean;
+  action: ReceiptAction;
+  app: string | null;
+  words: number;
+  confidence: number | null;
+  low_words: string[];
+  message: string | null;
+}
+
+// Subscribe to a shell event. In a plain browser the event import fails and
+// the returned unsubscribe is a no-op (same fallback pattern as invoke).
+export async function listenEvent<T>(event: string, cb: (payload: T) => void): Promise<() => void> {
+  try {
+    const { listen } = await import("@tauri-apps/api/event");
+    return await listen<T>(event, (e) => cb(e.payload as T));
+  } catch {
+    return () => {};
+  }
+}
+
+export function onTranscriptPartial(cb: (p: PartialTranscriptEvent) => void): Promise<() => void> {
+  return listenEvent<PartialTranscriptEvent>(EVENT_TRANSCRIPT_PARTIAL, cb);
+}
+
+export function onReceipt(cb: (p: ReceiptEvent) => void): Promise<() => void> {
+  return listenEvent<ReceiptEvent>(EVENT_RECEIPT, cb);
 }
 

@@ -1,4 +1,4 @@
-// WhimprFlow design tokens — "Deep-Slate / Aqua-Whimpr".
+// WhimprFlow design tokens  -  "Deep-Slate / Aqua-Whimpr".
 // Single source of truth, imported by CSS-in-TS and by the waveform canvas.
 // Deliberately distinct from Wispr's trade dress (own hues, accent, fonts, strings).
 

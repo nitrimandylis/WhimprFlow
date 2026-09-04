@@ -3,7 +3,8 @@ import { font } from "../tokens/values";
 import { theme } from "./theme";
 import { Card, PageTitle, useStats } from "./ui";
 import type { StatsSummary } from "./api";
-import { fmtCompact, fmtNum, newsArticles } from "./format";
+import { fmtCompact, fmtDuration, fmtNum, newsArticles } from "./format";
+import { EmptyState } from "./EmptyState";
 
 // ── Semicircular gauge ───────────────────────────────────────────────────────
 function Gauge({ value, max }: { value: number; max: number }) {
@@ -175,6 +176,50 @@ function Heatmap({ last7 }: { last7: number[] }) {
   );
 }
 
+// ── Seven day trend sparkline ────────────────────────────────────────────────
+function TrendLine({ data }: { data: number[] }) {
+  const max = Math.max(1, ...data);
+  const width = 360;
+  const height = 116;
+  const points = data.map((value, index) => {
+    const x = (index / Math.max(1, data.length - 1)) * width;
+    const y = height - 14 - (value / max) * (height - 28);
+    return `${x},${y}`;
+  }).join(" ");
+  const fill = `0,${height} ${points} ${width},${height}`;
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height="132" preserveAspectRatio="none" aria-label="Seven day dictation trend" role="img">
+      {[0.25, 0.5, 0.75].map((line) => <line key={line} x1="0" x2={width} y1={height * line} y2={height * line} stroke={theme.border} strokeDasharray="3 5" />)}
+      <polygon points={fill} fill="rgba(34,195,182,0.13)" />
+      <polyline points={points} fill="none" stroke={theme.accentDeep} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+      {data.map((value, index) => {
+        const x = (index / Math.max(1, data.length - 1)) * width;
+        const y = height - 14 - (value / max) * (height - 28);
+        return <circle key={index} cx={x} cy={y} r="4.5" fill={theme.cardBg} stroke={theme.accentDeep} strokeWidth="2.5"><title>{`${fmtNum(value)} words`}</title></circle>;
+      })}
+    </svg>
+  );
+}
+
+// ── Consistency ring ─────────────────────────────────────────────────────────
+function ConsistencyRing({ activeDays }: { activeDays: number }) {
+  const radius = 42;
+  const circumference = 2 * Math.PI * radius;
+  const fraction = activeDays / 7;
+  return (
+    <div style={{ display: "grid", placeItems: "center", position: "relative", width: 108, height: 108 }}>
+      <svg width="108" height="108" viewBox="0 0 108 108" style={{ transform: "rotate(-90deg)" }}>
+        <circle cx="54" cy="54" r={radius} fill="none" stroke={theme.track} strokeWidth="10" />
+        <circle cx="54" cy="54" r={radius} fill="none" stroke={theme.accent} strokeWidth="10" strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={circumference * (1 - fraction)} />
+      </svg>
+      <div style={{ position: "absolute", textAlign: "center" }}>
+        <div style={{ fontFamily: font.serif, color: theme.textStrong, fontSize: 24, lineHeight: 1 }}>{activeDays}/7</div>
+        <div style={{ color: theme.textFaint, fontSize: 10, marginTop: 4 }}>active days</div>
+      </div>
+    </div>
+  );
+}
+
 // ── Tabs ─────────────────────────────────────────────────────────────────────
 type Tab = "usage" | "voice";
 
@@ -213,6 +258,9 @@ function Tabs({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
 }
 
 function UsageTab({ stats }: { stats: StatsSummary }) {
+  const activeDays = stats.last7_words.filter((value) => value > 0).length;
+  const weeklyWords = stats.last7_words.reduce((total, value) => total + value, 0);
+  const averageSession = stats.total_sessions > 0 ? Math.round(stats.total_words / stats.total_sessions) : 0;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       {/* Top row — three stat cards */}
@@ -253,6 +301,37 @@ function UsageTab({ stats }: { stats: StatsSummary }) {
           </div>
         </Card>
       </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 18 }}>
+        <Card style={{ flex: "2 1 480px", minWidth: 0 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: theme.textStrong }}>Weekly momentum</div>
+            <div style={{ fontSize: 12, color: theme.accentDeep }}>{fmtNum(weeklyWords)} words this week</div>
+          </div>
+          <TrendLine data={stats.last7_words} />
+          <div style={{ display: "flex", justifyContent: "space-between", color: theme.textFaint, fontSize: 11, marginTop: -4 }}><span>6 days ago</span><span>Today</span></div>
+        </Card>
+
+        <Card style={{ flex: "1 1 230px", minWidth: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: theme.textStrong }}>Consistency</div>
+            <p style={{ margin: "7px 0 0", color: theme.textMuted, fontSize: 12.5, lineHeight: 1.45 }}>A little daily dictation makes the workflow automatic.</p>
+          </div>
+          <ConsistencyRing activeDays={activeDays} />
+        </Card>
+      </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 18 }}>
+        <StatCard label="Time reclaimed" foot="estimated against typing at 45 WPM">
+          <BigNumber value={fmtDuration(stats.time_saved_secs)} accent />
+        </StatCard>
+        <StatCard label="Average session" foot="words per completed dictation">
+          <BigNumber value={fmtNum(averageSession)} />
+        </StatCard>
+        <StatCard label="Fastest pace" foot={`today: ${fmtNum(stats.wpm_today)} WPM`}>
+          <BigNumber value={`${fmtNum(stats.best_wpm)} WPM`} accent />
+        </StatCard>
+      </div>
     </div>
   );
 }
@@ -279,8 +358,17 @@ export function Insights() {
   return (
     <div style={{ maxWidth: 1000 }}>
       <PageTitle>Insights</PageTitle>
-      <Tabs tab={tab} onChange={setTab} />
-      {tab === "usage" ? <UsageTab stats={stats} /> : <VoiceTab />}
+      {stats.total_sessions === 0 ? (
+        <EmptyState
+          title="No dictations yet"
+          body="Hold your dictation key and start speaking."
+        />
+      ) : (
+        <>
+          <Tabs tab={tab} onChange={setTab} />
+          {tab === "usage" ? <UsageTab stats={stats} /> : <VoiceTab />}
+        </>
+      )}
     </div>
   );
 }

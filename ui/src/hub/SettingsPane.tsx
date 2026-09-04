@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { font } from "../tokens/values";
-import { theme } from "./theme";
+import { theme, applyTheme, getStoredTheme, type ThemeMode } from "./theme";
 import { Button, Card, Dot, PageTitle, Segmented } from "./ui";
 import {
   LANGUAGES,
@@ -297,10 +297,28 @@ export function SettingsPane({
   useEffect(() => {
     void listMicrophones().then(setMics);
   }, []);
+  const [appearance, setAppearance] = useState<ThemeMode>(getStoredTheme());
 
   return (
     <div style={{ maxWidth: 720 }}>
       <PageTitle>Settings</PageTitle>
+
+      <Card style={{ marginBottom: 16 }}>
+        <SectionTitle sub="Switch between the warm light theme and a low-glare dark theme.">
+          Appearance
+        </SectionTitle>
+        <Segmented
+          options={[
+            { value: "light", label: "Light" },
+            { value: "dark", label: "Dark" },
+          ]}
+          value={appearance}
+          onChange={(v) => {
+            setAppearance(v);
+            applyTheme(v);
+          }}
+        />
+      </Card>
 
       <Card style={{ marginBottom: 16 }}>
         <SectionTitle sub="Which engine turns your speech into text.">Speech-to-Text</SectionTitle>
