@@ -90,6 +90,9 @@ export interface Status {
   // One sentence saying why the microphone row can't go green, when there's
   // something the reader couldn't otherwise have known. Null when there isn't.
   microphone_hint: string | null;
+  /** True once the global hotkey (Fn tap / Right Ctrl hook) is actually live —
+   *  false for the macOS stale-TCC case where "granted" isn't really working. */
+  hotkey_wired: boolean;
   has_openai_key: boolean;
   has_anthropic_key: boolean;
 }
@@ -103,6 +106,7 @@ export const UNKNOWN_STATUS: Status = {
   microphone_grant: "not_asked",
   charged_to: null,
   microphone_hint: null,
+  hotkey_wired: false,
   has_openai_key: false,
   has_anthropic_key: false,
 };
@@ -204,6 +208,18 @@ export async function onPermissions(cb: (p: Permissions) => void): Promise<() =>
     return await listen<Permissions>("whimpr://permissions", (e) => cb(e.payload));
   } catch {
     return () => {};
+  }
+}
+
+/**
+ * Fix the macOS stale-Accessibility case: reset the TCC entry, re-prompt, and
+ * open the Accessibility pane so the user can enable WhimprFlow fresh.
+ */
+export async function fixAccessibility(): Promise<void> {
+  try {
+    await invoke<void>("fix_accessibility");
+  } catch {
+    /* browser preview */
   }
 }
 

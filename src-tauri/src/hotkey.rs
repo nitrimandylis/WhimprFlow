@@ -99,13 +99,16 @@ mod imp {
     static CLOCK: OnceLock<Instant> = OnceLock::new();
     static FN_IS_DOWN: AtomicBool = AtomicBool::new(false);
     static TAP_PORT: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
+    /// True once the global Fn CGEventTap is actually created and running —
+    /// distinct from `AXIsProcessTrusted`, which can report "granted" for a
+    /// stale TCC entry that macOS will never honor for this build's signature.
+    /// Drives the Hub's `hotkey_wired` status and the stale-grant Fix flow.
+    static TAP_LIVE: AtomicBool = AtomicBool::new(false);
     /// Set once at startup if no Whisper model file exists on disk at all —
     /// distinct from "still loading", so the finalize path only shows the
     /// user a loud "no speech model" error for the real case, not a race
     /// against the ~1s background load right after launch.
     static ASR_MODEL_MISSING: AtomicBool = AtomicBool::new(false);
-    /// Bundle id of the app that was frontmost at record-start = the paste target.
-    /// Cleanup uses it to format for the medium (email vs. text vs. chat).
     static TARGET_APP: OnceLock<Mutex<Option<String>>> = OnceLock::new();
     static CAPTURE: OnceLock<Mutex<Option<whimpr_audio::CaptureHandle>>> = OnceLock::new();
     static ASR: OnceLock<Arc<whimpr_asr::WhisperEngine>> = OnceLock::new();
@@ -122,11 +125,6 @@ mod imp {
     static SCRATCHPAD_CAPTURE: AtomicBool = AtomicBool::new(false);
     static DICTIONARY: OnceLock<Mutex<whimpr_core::DictionaryStore>> = OnceLock::new();
     static STATS: OnceLock<Mutex<whimpr_core::StatsStore>> = OnceLock::new();
-
-    #[derive(Clone, Serialize)]
-    struct BarPayload {
-        state: &'static str,
-    }
 
     #[derive(Clone, Serialize)]
     struct WavePayload {
@@ -680,10 +678,10 @@ mod imp {
         // Remembered so the pill's Stop button knows whether it is ending a held
         // dictation (release) or a hands-free one (which needs a tap).
         *LAST_BAR.get_or_init(|| Mutex::new("idle")).lock().unwrap() = state;
-        let _ = app.emit_to(OVERLAY_LABEL, "whimpr://flowbar/state", BarPayload { state });
-        // Show/hide for "only while dictating" mode, and re-anchor onto the
-        // display the user is actually on when a session starts.
-        crate::sync_pill_visibility(app, state);
+        // Shared emitter also toggles the overlay window: visible for every
+        // state except idle, and re-anchors onto the display the user is
+        // actually on when a session starts.
+        crate::emit_flowbar_state(app, state);
     }
 
     /// Feed one input into the shared state machine and enact its actions.
@@ -935,6 +933,19 @@ mod imp {
         }));
     }
 
+    /// Whether the global Fn tap is live (see [`TAP_LIVE`]). `get_status`
+    /// surfaces this to the Hub as `hotkey_wired`.
+    pub fn tap_live() -> bool {
+        TAP_LIVE.load(Ordering::SeqCst)
+    }
+
+    /// Called when the Hub's "Fix Accessibility" flow resets the TCC entry: the
+    /// old tap (if any) is no longer meaningful until the user re-grants and a
+    /// fresh tap is created.
+    pub fn mark_tap_stale() {
+        TAP_LIVE.store(false, Ordering::SeqCst);
+    }
+
     pub fn install(app: AppHandle) {
         let _ = APP.set(app);
         let _ = MACHINE.set(Mutex::new(StateMachine::new()));
@@ -990,16 +1001,27 @@ mod imp {
 
         // Accessibility is the ONE permission that makes the Fn CGEventTap global AND
         // lets us post the Cmd+V paste into other apps. Without it, a keyboard tap is
-        // silently limited to frontmost-only — the exact bug. Prompt for it up front.
+        // silently limited to frontmost-only — the exact bug. Self-heal up front:
+        // "granted in System Settings but the app doesn't acknowledge it" means a
+        // stale TCC entry is enforcing an older build's signature, so clear it,
+        // re-prompt, and open the pane — the tap thread below picks the fresh grant
+        // up the moment it lands, with no relaunch.
         if crate::paste::is_trusted() {
             eprintln!("[whimpr] Accessibility granted — Fn works in every app, paste enabled");
         } else {
             eprintln!(
-                "[whimpr] ⚠ Accessibility NOT granted — Fn only works while WhimprFlow is \
-                 frontmost and paste is disabled. Prompting; grant WhimprFlow under System \
-                 Settings → Privacy & Security → Accessibility (no relaunch needed)."
+                "[whimpr] ⚠ Accessibility NOT granted — clearing any stale TCC entry, \
+                 re-prompting, and opening System Settings → Privacy & Security → \
+                 Accessibility (no relaunch needed)."
             );
-            crate::paste::prompt_accessibility();
+            std::thread::spawn(|| {
+                // Let the Hub/onboarding window mount first so the user sees it
+                // before the Settings pane opens over it.
+                std::thread::sleep(Duration::from_millis(800));
+                if let Err(e) = crate::reset_and_prompt_accessibility() {
+                    eprintln!("[whimpr] accessibility self-heal failed: {e}");
+                }
+            });
         }
         // Input Monitoring is NOT the gate for a CGEventTap — kept only as diagnostics.
         eprintln!(
@@ -1036,6 +1058,13 @@ mod imp {
             // picked up automatically.
             let mut reported = false;
             let port = loop {
+                // Re-check trust inside the retry loop: the Hub's "Fix" button
+                // resets the TCC entry, and a tap created while untrusted is
+                // permanently frontmost-only — keep waiting for a fresh grant.
+                if !crate::paste::is_trusted() {
+                    std::thread::sleep(Duration::from_millis(500));
+                    continue;
+                }
                 let port = unsafe {
                     CGEventTapCreate(
                         K_CG_SESSION_EVENT_TAP,
@@ -1051,9 +1080,8 @@ mod imp {
                 }
                 eprintln!(
                     "[whimpr] Fn tap null despite Accessibility — likely a stale TCC entry from \
-                     an earlier build. Run: tccutil reset Accessibility com.whimpr.whimprflow, \
-                     or toggle WhimprFlow off/on under System Settings → Privacy & Security → \
-                     Accessibility. Retrying…"
+                     an earlier build. Use the Hub's Fix button (or run: tccutil reset \
+                     Accessibility com.whimpr.whimprflow), then re-enable WhimprFlow. Retrying…"
                 );
                 if !reported {
                     if let Some(app) = APP.get() {
@@ -1067,6 +1095,7 @@ mod imp {
                 eprintln!("[whimpr] Fn tap recovered — the key is live now.");
                 crate::diag::clear_last_error();
             }
+            TAP_LIVE.store(true, Ordering::SeqCst);
             TAP_PORT.store(port, Ordering::SeqCst);
             unsafe {
                 let source = CFMachPortCreateRunLoopSource(null(), port, 0);
@@ -1081,18 +1110,18 @@ mod imp {
 #[cfg(target_os = "macos")]
 pub use imp::{
     cancel_dictation, current_settings, dictionary_add, dictionary_entries, dictionary_learn,
-    dictionary_remove, history, install, rebuild_providers, scratchpad_capture, scratchpad_path,
-    set_scratchpad_capture, snippet_add, snippet_remove, snippets, stats_summary, stop_dictation,
-    transform_set_enabled, transforms, trigger_hands_free, ui_cancel, ui_start, ui_stop,
-    update_settings,
+    dictionary_remove, history, install, mark_tap_stale, rebuild_providers, scratchpad_capture,
+    scratchpad_path, set_scratchpad_capture, snippet_add, snippet_remove, snippets, stats_summary,
+    stop_dictation, tap_live, transform_set_enabled, transforms, trigger_hands_free, ui_cancel,
+    ui_start, ui_stop, update_settings,
 };
 
 // Windows uses the real (but unverified) platform layer in `crate::win`.
 #[cfg(target_os = "windows")]
 pub use crate::win::{
     cancel_dictation, current_settings, dictionary_add, dictionary_entries, dictionary_learn,
-    dictionary_remove, history, install, rebuild_providers, stats_summary, stop_dictation,
-    trigger_hands_free, update_settings,
+    dictionary_remove, history, install, mark_tap_stale, rebuild_providers, stats_summary,
+    stop_dictation, tap_live, trigger_hands_free, update_settings,
 };
 
 // Other platforms (Linux, etc.): inert stubs so the crate still builds.
@@ -1138,12 +1167,16 @@ mod other {
     pub fn ui_cancel() {}
     pub fn ui_stop() {}
     pub fn ui_start() {}
+    pub fn tap_live() -> bool {
+        true
+    }
+    pub fn mark_tap_stale() {}
 }
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub use other::{
     cancel_dictation, current_settings, dictionary_add, dictionary_entries, dictionary_learn,
-    dictionary_remove, history, install, rebuild_providers, scratchpad_capture, scratchpad_path,
-    set_scratchpad_capture, snippet_add, snippet_remove, snippets, stats_summary, stop_dictation,
-    transform_set_enabled, transforms, trigger_hands_free, ui_cancel, ui_start, ui_stop,
-    update_settings,
+    dictionary_remove, history, install, mark_tap_stale, rebuild_providers, scratchpad_capture,
+    scratchpad_path, set_scratchpad_capture, snippet_add, snippet_remove, snippets, stats_summary,
+    stop_dictation, tap_live, transform_set_enabled, transforms, trigger_hands_free, ui_cancel,
+    ui_start, ui_stop, update_settings,
 };
