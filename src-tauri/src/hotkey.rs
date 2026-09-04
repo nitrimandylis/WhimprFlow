@@ -28,7 +28,7 @@ mod imp {
     use tauri::{AppHandle, Emitter};
     use whimpr_core::state::{Action, BarState};
     use whimpr_core::{
-        AsrEngine, CleanupContext, CleanupMode, CleanupProvider, Input, PipelineEvent, StateMachine,
+        CleanupContext, CleanupMode, CleanupProvider, Input, PipelineEvent, StateMachine,
         TriggerToken,
     };
     use whimpr_core::BindingId;
@@ -106,7 +106,7 @@ mod imp {
     static ASR_MODEL_MISSING: AtomicBool = AtomicBool::new(false);
     static TARGET_APP: OnceLock<Mutex<Option<String>>> = OnceLock::new();
     static CAPTURE: OnceLock<Mutex<Option<whimpr_audio::CaptureHandle>>> = OnceLock::new();
-    static ASR: OnceLock<Arc<whimpr_asr::WhisperEngine>> = OnceLock::new();
+    static ASR: OnceLock<Mutex<Option<Arc<dyn whimpr_core::AsrEngine>>>> = OnceLock::new();
     static OPENAI: OnceLock<Mutex<Option<whimpr_cleanup::OpenAiProvider>>> = OnceLock::new();
     static ANTHROPIC: OnceLock<Mutex<Option<whimpr_cleanup::AnthropicProvider>>> = OnceLock::new();
     static LOCAL: OnceLock<Mutex<Option<crate::local_llm::LocalWorker>>> = OnceLock::new();
@@ -288,6 +288,7 @@ mod imp {
         let _ = new.save(&settings_path());
         apply_live_settings(&new);
         rebuild_providers();
+        rebuild_asr(&new);
     }
 
     // ── Pill controls ────────────────────────────────────────────────────────
@@ -390,8 +391,10 @@ mod imp {
         PTT_KEYCODE.store(keycode, Ordering::Relaxed);
         PTT_MASK.store(mask, Ordering::Relaxed);
 
-        if let Some(asr) = ASR.get() {
-            asr.set_language(&s.language);
+        if let Some(slot) = ASR.get() {
+            if let Some(asr) = slot.lock().unwrap().as_ref() {
+                asr.set_language(&s.language);
+            }
         }
     }
 
@@ -426,6 +429,66 @@ mod imp {
             }
         }
         sync_local_worker(settings.cleanup_mode);
+    }
+
+    /// (Re)build the speech-to-text engine to match the current ASR mode.
+    /// Cloud is built synchronously (just an HTTP client); local Whisper loads
+    /// off-thread since parsing the model takes ~1s.
+    pub fn rebuild_asr(settings: &whimpr_core::Settings) {
+        match settings.asr_mode {
+            whimpr_core::AsrMode::Cloud => {
+                let key = read_openai_key();
+                let Some(key) = key else {
+                    eprintln!(
+                        "[whimpr] ASR: cloud mode but no OpenAI-slot API key saved \
+                         (cloud ASR reuses the OpenAI API key in Settings)"
+                    );
+                    return;
+                };
+                let model = settings.asr_model.clone();
+                eprintln!(
+                    "[whimpr] ASR: cloud mode, model={model}, base_url={:?}",
+                    settings.asr_base_url
+                );
+                let engine: Arc<dyn whimpr_core::AsrEngine> =
+                    Arc::new(whimpr_cleanup::CloudAsr::with_base_url(
+                        key,
+                        model,
+                        Some(settings.asr_base_url.clone()),
+                    ));
+                if let Some(slot) = ASR.get() {
+                    *slot.lock().unwrap() = Some(engine);
+                }
+                ASR_MODEL_MISSING.store(false, Ordering::SeqCst);
+                eprintln!("[whimpr] ASR ready (cloud)");
+            }
+            whimpr_core::AsrMode::Local => {
+                let language = settings.language.clone();
+                std::thread::spawn(move || {
+                    let path = model_path();
+                    if !path.exists() {
+                        eprintln!("[whimpr] ASR model not found at {}", path.display());
+                        ASR_MODEL_MISSING.store(true, Ordering::SeqCst);
+                        return;
+                    }
+                    match whimpr_asr::WhisperEngine::load(&path) {
+                        Ok(engine) => {
+                            engine.set_language(&language);
+                            let engine: Arc<dyn whimpr_core::AsrEngine> = Arc::new(engine);
+                            if let Some(slot) = ASR.get() {
+                                *slot.lock().unwrap() = Some(engine);
+                            }
+                            ASR_MODEL_MISSING.store(false, Ordering::SeqCst);
+                            eprintln!("[whimpr] ASR ready (local)");
+                        }
+                        Err(e) => {
+                            eprintln!("[whimpr] ASR model load failed: {e}");
+                            ASR_MODEL_MISSING.store(true, Ordering::SeqCst);
+                        }
+                    }
+                });
+            }
+        }
     }
 
     /// Start (or stop) the local llama.cpp cleanup worker to match the current
@@ -653,7 +716,8 @@ mod imp {
                         finish();
                         return;
                     }
-                    let Some(asr) = ASR.get().cloned() else {
+                    let asr = ASR.get().and_then(|m| m.lock().unwrap().clone());
+                    let Some(asr) = asr else {
                         eprintln!("[whimpr] ASR not ready (model still loading or missing)");
                         if was_real_attempt && ASR_MODEL_MISSING.load(Ordering::SeqCst) {
                             crate::diag::report(&app2, whimpr_core::InjectionFailure::AsrUnavailable);
@@ -800,30 +864,7 @@ mod imp {
         let _ = MACHINE.set(Mutex::new(StateMachine::new()));
         let _ = CLOCK.set(Instant::now());
 
-        // Load the speech-to-text model off the main thread (it takes ~1s).
-        std::thread::spawn(|| {
-            let path = model_path();
-            if !path.exists() {
-                eprintln!("[whimpr] ASR model not found at {}", path.display());
-                ASR_MODEL_MISSING.store(true, Ordering::SeqCst);
-                return;
-            }
-            match whimpr_asr::WhisperEngine::load(&path) {
-                Ok(engine) => {
-                    let _ = ASR.set(Arc::new(engine));
-                    // Settings may already be loaded by now; if not, update_settings
-                    // will push the language through later.
-                    if let Some(asr) = ASR.get() {
-                        asr.set_language(&current_settings().language);
-                    }
-                    eprintln!("[whimpr] ASR model loaded — ready to transcribe");
-                }
-                Err(e) => {
-                    eprintln!("[whimpr] ASR model load failed: {e}");
-                    ASR_MODEL_MISSING.store(true, Ordering::SeqCst);
-                }
-            }
-        });
+        let _ = ASR.set(Mutex::new(None));
 
         // Load settings + dictionary, and build cloud providers from stored keys.
         let settings = whimpr_core::Settings::load(&settings_path());
@@ -839,6 +880,7 @@ mod imp {
         apply_live_settings(&current_settings());
         let _ = LOCAL.set(Mutex::new(None));
         rebuild_providers();
+        rebuild_asr(&current_settings());
 
         // Accessibility is the ONE permission that makes the Fn CGEventTap global AND
         // lets us post the Cmd+V paste into other apps. Without it, a keyboard tap is
@@ -951,8 +993,8 @@ mod imp {
 #[cfg(target_os = "macos")]
 pub use imp::{
     current_settings, dictionary_add, dictionary_entries, dictionary_learn,
-    dictionary_remove, history, install, last_bar, mark_tap_stale, rebuild_providers,
-    stats_summary, tap_live,
+    dictionary_remove, history, install, last_bar, mark_tap_stale, rebuild_asr,
+    rebuild_providers, stats_summary, tap_live,
     trigger_hands_free, ui_cancel, ui_start, ui_stop, update_settings,
 };
 
@@ -973,6 +1015,7 @@ mod other {
     }
     pub fn update_settings(_new: whimpr_core::Settings) {}
     pub fn rebuild_providers() {}
+    pub fn rebuild_asr(_settings: &whimpr_core::Settings) {}
     pub fn stats_summary(tz_offset_minutes: i32) -> whimpr_core::StatsSummary {
         whimpr_core::StatsStore::default().summary(tz_offset_minutes, 0)
     }
@@ -1000,7 +1043,7 @@ mod other {
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub use other::{
     current_settings, dictionary_add, dictionary_entries, dictionary_learn,
-    dictionary_remove, history, install, last_bar, mark_tap_stale, rebuild_providers,
-    stats_summary, tap_live,
+    dictionary_remove, history, install, last_bar, mark_tap_stale, rebuild_asr,
+    rebuild_providers, stats_summary, tap_live,
     trigger_hands_free, ui_cancel, ui_start, ui_stop, update_settings,
 };

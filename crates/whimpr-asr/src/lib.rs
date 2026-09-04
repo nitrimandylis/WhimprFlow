@@ -50,6 +50,12 @@ impl AsrEngine for WhisperEngine {
         }
     }
 
+    fn set_language(&self, language: &str) {
+        if let Ok(mut g) = self.language.write() {
+            *g = language.to_string();
+        }
+    }
+
     fn transcribe(&self, pcm16k: &[f32]) -> anyhow::Result<Transcript> {
         let mut state = self
             .ctx

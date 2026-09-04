@@ -811,6 +811,8 @@ fn set_api_key(provider: String, key: String) -> Result<(), String> {
         entry.set_password(key).map_err(|e| e.to_string())?;
     }
     hotkey::rebuild_providers();
+    // Cloud ASR reuses the OpenAI key, so a key change may affect it too.
+    hotkey::rebuild_asr(&hotkey::current_settings());
     Ok(())
 }
 

@@ -48,4 +48,8 @@ pub trait AsrEngine: Send + Sync {
 
     /// Transcribe one complete utterance.
     fn transcribe(&self, pcm16k: &[f32]) -> anyhow::Result<Transcript>;
+
+    /// Update the language hint for future transcriptions. Not all engines
+    /// support runtime language changes (cloud engines bake it in at construction).
+    fn set_language(&self, _language: &str) {}
 }
