@@ -31,7 +31,16 @@ impl LocalWorker {
         &mut self,
         messages: &[whimpr_core::cleanup::CleanupMsg],
     ) -> anyhow::Result<String> {
-        let req = serde_json::json!({ "messages": messages, "max_tokens": 400 });
+        // Size the output budget to the transcript, so a long dictation is not
+        // truncated mid-sentence with its last words dropped (Publik Test 2:
+        // "sometimes the last few words I say are cut off … because of the
+        // cleanup"). The cleaned text is about as long as what was said, and the
+        // real transcript is the LAST message (the few-shot turns come before
+        // it); ~4 chars/token, doubled for reformatting headroom, floored at 400
+        // so a short dictation is unchanged and fast.
+        let transcript_chars = messages.last().map(|m| m.content.chars().count()).unwrap_or(0);
+        let max_tokens = (transcript_chars / 2).max(400);
+        let req = serde_json::json!({ "messages": messages, "max_tokens": max_tokens });
         let mut line = serde_json::to_string(&req)?;
         line.push('\n');
         self.stdin.write_all(line.as_bytes())?;

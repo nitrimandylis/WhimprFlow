@@ -427,6 +427,13 @@ pub fn update_settings(new: whimpr_core::Settings) {
     rebuild_providers();
 }
 
+/// Stop / cancel the overlay pill's current recording. The Windows dictation
+/// driver does not route through the shared `handle_input` state machine the
+/// macOS layer uses, so these are inert here for now — the pill's Stop/✕ buttons
+/// are wired on macOS (Publik Test 2); a Windows equivalent is separate work.
+pub fn stop_dictation() {}
+pub fn cancel_dictation() {}
+
 pub fn rebuild_providers() {
     let settings = current_settings_inner();
     let model = settings.openai_model;

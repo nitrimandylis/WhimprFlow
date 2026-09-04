@@ -105,6 +105,18 @@ fn set_settings(settings: whimpr_core::Settings) {
     hotkey::update_settings(settings);
 }
 
+/// Stop and finalize the current recording — the overlay pill's red Stop button.
+#[tauri::command]
+fn stop_dictation() {
+    hotkey::stop_dictation();
+}
+
+/// Discard the current recording — the overlay pill's ✕ button.
+#[tauri::command]
+fn cancel_dictation() {
+    hotkey::cancel_dictation();
+}
+
 /// Aggregated dictation stats for the Hub dashboard. `tz_offset_minutes` is the
 /// browser's `Date.getTimezoneOffset()` so "today"/streak match the user's clock.
 #[tauri::command]
@@ -256,6 +268,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             set_settings,
+            stop_dictation,
+            cancel_dictation,
             get_stats,
             get_history,
             get_dictionary,

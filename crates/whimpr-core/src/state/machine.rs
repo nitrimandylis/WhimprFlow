@@ -144,6 +144,17 @@ impl StateMachine {
                 DictationState::Idle => vec![],
             },
 
+            // --- Stop button finalizes any active recording -----------------
+            // The pill's red square: stop and transcribe what was said, in EITHER
+            // mode, so the on-screen control works the same whether the session
+            // is push-to-talk or hands-free. Only a live recording can be
+            // finalized; a quick tap awaiting a lock, an in-flight finalize, and
+            // idle have nothing to stop.
+            (DictationState::Recording { session, .. }, TriggerToken::Stop { .. }) => {
+                self.finalize(session)
+            }
+            (_, TriggerToken::Stop { .. }) => vec![],
+
             // A partial-chord abort while nothing is recording is a no-op.
             (_, TriggerToken::NormalKeyDuringArm) => vec![],
 
@@ -310,6 +321,42 @@ mod tests {
         let a = m.step(Input::Trigger(TriggerToken::Cancel { at_ms: 300 }));
         assert!(a.iter().any(|x| matches!(x, Action::DiscardCapture { .. })));
         assert!(a.iter().any(|x| matches!(x, Action::ShowBar(BarState::Cancelled))));
+        assert!(matches!(m.state(), DictationState::Idle));
+    }
+
+    // The pill's Stop button (the red square). Reported dead in Publik Test 2:
+    // "the X button doesn't work and neither does the red with the square in it."
+    // The button now emits `TriggerToken::Stop`, which must finalize a live
+    // recording in EITHER mode.
+    #[test]
+    fn stop_button_finalizes_a_push_to_talk_recording() {
+        let mut m = StateMachine::new();
+        m.step(down(BindingId::PushToTalk, 0));
+        let a = m.step(Input::Trigger(TriggerToken::Stop { at_ms: 1_000 }));
+        assert!(a.iter().any(|x| matches!(x, Action::StopCaptureAndFinalize { .. })));
+        assert!(a.iter().any(|x| matches!(x, Action::RunPipeline { .. })));
+        assert!(matches!(m.state(), DictationState::Finalizing { .. }));
+    }
+
+    #[test]
+    fn stop_button_finalizes_a_hands_free_recording() {
+        let mut m = StateMachine::new();
+        // Double-tap into a hands-free (Locked) session.
+        m.step(down(BindingId::PushToTalk, 0));
+        m.step(up(BindingId::PushToTalk, 50));
+        m.step(down(BindingId::PushToTalk, 200));
+        assert!(matches!(m.state(), DictationState::Recording { mode: RecordMode::Locked, .. }));
+
+        let a = m.step(Input::Trigger(TriggerToken::Stop { at_ms: 5_000 }));
+        assert!(a.iter().any(|x| matches!(x, Action::StopCaptureAndFinalize { .. })));
+        assert!(matches!(m.state(), DictationState::Finalizing { .. }));
+    }
+
+    #[test]
+    fn stop_when_idle_does_nothing() {
+        let mut m = StateMachine::new();
+        let a = m.step(Input::Trigger(TriggerToken::Stop { at_ms: 10 }));
+        assert!(a.is_empty());
         assert!(matches!(m.state(), DictationState::Idle));
     }
 

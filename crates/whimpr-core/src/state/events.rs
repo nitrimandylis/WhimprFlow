@@ -16,6 +16,12 @@ pub enum TriggerToken {
     Up { binding: BindingId, at_ms: u64 },
     /// The cancel key (Esc) was pressed — valid in any state, ignoring modifiers.
     Cancel { at_ms: u64 },
+    /// Stop and finalize the current recording, whatever mode it is in — the
+    /// pill's Stop button (the red square). Distinct from `Up`/`Down`, which
+    /// depend on which key and which mode; this finalizes any active recording
+    /// the same way regardless, so the on-screen control does not have to know
+    /// whether the session is push-to-talk or hands-free.
+    Stop { at_ms: u64 },
     /// A non-trigger key interrupted a partially-held chord; abort it.
     NormalKeyDuringArm,
 }

@@ -25,6 +25,19 @@ async function tauriListen<T>(event: string, cb: (payload: T) => void): Promise<
   }
 }
 
+// Fire a backend command. Used by the pill's Stop/Cancel buttons, which were
+// decorative before Publik Test 2 ("the X button doesn't work and neither does
+// the red with the square in it") — they had no handler and there was no command
+// to reach the dictation state machine.
+async function tauriInvoke(command: string): Promise<void> {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke(command);
+  } catch {
+    // No-op outside a Tauri webview (e.g. a plain browser preview).
+  }
+}
+
 // A row of dot-like rounded bars driven by mic RMS — Wispr's dotted-waveform look:
 // small dots when quiet, rising into a waveform when speaking.
 function DottedWaveform({ bars }: { bars: number[] }) {
@@ -78,6 +91,8 @@ function CancelButton() {
   return (
     <div
       title="Cancel (Esc)"
+      role="button"
+      onClick={() => void tauriInvoke("cancel_dictation")}
       style={{
         flex: "0 0 auto",
         width: 26,
@@ -90,6 +105,7 @@ function CancelButton() {
         color: "#fff",
         fontSize: 15,
         lineHeight: 1,
+        cursor: "pointer",
       }}
     >
       ✕
@@ -101,6 +117,8 @@ function StopButton() {
   return (
     <div
       title="Stop"
+      role="button"
+      onClick={() => void tauriInvoke("stop_dictation")}
       style={{
         flex: "0 0 auto",
         width: 26,
@@ -110,6 +128,7 @@ function StopButton() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
+        cursor: "pointer",
       }}
     >
       <div style={{ width: 9, height: 9, borderRadius: 2, background: "#fff" }} />

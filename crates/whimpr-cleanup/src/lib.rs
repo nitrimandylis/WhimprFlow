@@ -10,6 +10,16 @@ use whimpr_core::cleanup::{build_messages, CleanupContext, CleanupProvider, Prov
 /// Default OpenAI Chat Completions endpoint.
 const OPENAI_DEFAULT_URL: &str = "https://api.openai.com/v1/chat/completions";
 
+/// Output token budget for a cleanup, scaled to the transcript so a long
+/// dictation's cleaned text is not truncated with its last words dropped
+/// (Publik Test 2: "sometimes the last few words I say are cut off … because of
+/// the cleanup"). The cleaned text is about as long as what was said; ~4
+/// chars/token, doubled for reformatting headroom, and floored so a short
+/// dictation keeps the generous fixed cap it always had.
+fn cleanup_max_tokens(raw: &str, floor: usize) -> usize {
+    (raw.chars().count() / 2).max(floor)
+}
+
 /// Cleanup via the OpenAI Chat Completions API — or any OpenAI-compatible
 /// endpoint (OpenRouter, a local server, etc.) when `base_url` is set.
 /// OpenRouter in particular speaks this exact wire format at
@@ -65,7 +75,7 @@ impl CleanupProvider for OpenAiProvider {
         let body = serde_json::json!({
             "model": self.model,
             "temperature": 0.2,
-            "max_tokens": 512,
+            "max_tokens": cleanup_max_tokens(raw, 512),
             "messages": messages,
         });
 
@@ -136,7 +146,7 @@ impl CleanupProvider for AnthropicProvider {
         }
         let body = serde_json::json!({
             "model": self.model,
-            "max_tokens": 512,
+            "max_tokens": cleanup_max_tokens(raw, 512),
             "temperature": 0.2,
             "system": system,
             "messages": messages,
@@ -166,5 +176,27 @@ impl CleanupProvider for AnthropicProvider {
             anyhow::bail!("Anthropic returned empty content");
         }
         Ok(text)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cleanup_max_tokens;
+
+    #[test]
+    fn short_dictation_keeps_the_floor() {
+        // A short utterance stays at the generous fixed cap — behaviour unchanged.
+        assert_eq!(cleanup_max_tokens("hey, quick note", 512), 512);
+        assert_eq!(cleanup_max_tokens("", 512), 512);
+    }
+
+    #[test]
+    fn long_dictation_scales_above_the_floor_so_the_tail_is_not_cut() {
+        // ~2400 chars ≈ 600 tokens of speech; the old fixed 512 cap would truncate
+        // the cleaned text and drop the last words. The budget now scales with it.
+        let long = "word ".repeat(480); // 2400 chars
+        let budget = cleanup_max_tokens(&long, 512);
+        assert!(budget > 512, "a long dictation must get more than the floor, got {budget}");
+        assert_eq!(budget, long.chars().count() / 2);
     }
 }

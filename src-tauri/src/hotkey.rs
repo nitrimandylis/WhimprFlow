@@ -630,6 +630,20 @@ mod imp {
         event
     }
 
+    /// Stop and finalize the current recording — the pill's red Stop button.
+    /// Drives the same state machine the Fn key does, so it works in either
+    /// mode. Reported dead in Publik Test 2 ("the red with the square in it").
+    pub fn stop_dictation() {
+        handle_input(Input::Trigger(TriggerToken::Stop { at_ms: now_ms() }));
+    }
+
+    /// Discard the current recording — the pill's ✕ button. Same path Esc would
+    /// take, if Esc were wired. Reported dead in Publik Test 2 ("the X button
+    /// doesn't work").
+    pub fn cancel_dictation() {
+        handle_input(Input::Trigger(TriggerToken::Cancel { at_ms: now_ms() }));
+    }
+
     pub fn install(app: AppHandle) {
         let _ = APP.set(app);
         let _ = MACHINE.set(Mutex::new(StateMachine::new()));
@@ -766,15 +780,17 @@ mod imp {
 
 #[cfg(target_os = "macos")]
 pub use imp::{
-    current_settings, dictionary_add, dictionary_entries, dictionary_learn, dictionary_remove,
-    history, install, rebuild_providers, stats_summary, update_settings,
+    cancel_dictation, current_settings, dictionary_add, dictionary_entries, dictionary_learn,
+    dictionary_remove, history, install, rebuild_providers, stats_summary, stop_dictation,
+    update_settings,
 };
 
 // Windows uses the real (but unverified) platform layer in `crate::win`.
 #[cfg(target_os = "windows")]
 pub use crate::win::{
-    current_settings, dictionary_add, dictionary_entries, dictionary_learn, dictionary_remove,
-    history, install, rebuild_providers, stats_summary, update_settings,
+    cancel_dictation, current_settings, dictionary_add, dictionary_entries, dictionary_learn,
+    dictionary_remove, history, install, rebuild_providers, stats_summary, stop_dictation,
+    update_settings,
 };
 
 // Other platforms (Linux, etc.): inert stubs so the crate still builds.
@@ -798,9 +814,12 @@ mod other {
     pub fn dictionary_add(_correct: String, _mishears: Vec<String>) {}
     pub fn dictionary_remove(_correct: &str) {}
     pub fn dictionary_learn(_correct: String, _mishears: Vec<String>) {}
+    pub fn stop_dictation() {}
+    pub fn cancel_dictation() {}
 }
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub use other::{
-    current_settings, dictionary_add, dictionary_entries, dictionary_learn, dictionary_remove,
-    history, install, rebuild_providers, stats_summary, update_settings,
+    cancel_dictation, current_settings, dictionary_add, dictionary_entries, dictionary_learn,
+    dictionary_remove, history, install, rebuild_providers, stats_summary, stop_dictation,
+    update_settings,
 };
