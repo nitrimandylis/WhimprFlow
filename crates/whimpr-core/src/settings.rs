@@ -123,6 +123,16 @@ pub enum AsrMode {
     Cloud,
 }
 
+/// Hub window appearance. `System` follows macOS; the others pin it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Appearance {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
 fn default_asr_model() -> String {
     "whisper-large-v3-turbo".to_string()
 }
@@ -205,6 +215,9 @@ pub struct Settings {
     /// still records word counts and timing for the stats, but no text.
     #[serde(default = "default_true")]
     pub save_history: bool,
+    /// Hub appearance: follow the system, or pin light or dark.
+    #[serde(default)]
+    pub appearance: Appearance,
 }
 
 /// The out-of-the-box hands-free hotkey. Chosen to match what the cofounder
@@ -253,6 +266,7 @@ impl Default for Settings {
             microphone: String::new(),
             style_instructions: String::new(),
             save_history: true,
+            appearance: Appearance::default(),
         }
     }
 }

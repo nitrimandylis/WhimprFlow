@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { font, palette } from "../tokens/values";
-import { theme } from "./theme";
+import { Button, Group, Status } from "./ui";
 import {
   fixAccessibility,
   requestAccessibility,
@@ -11,99 +10,41 @@ import {
   downloadModel,
   onModelProgress,
   onModelDone,
-  type Status,
+  type Status as StatusT,
 } from "./api";
 
-// The permission gate. The three permissions are presented in order (each
-// unlocks the next), and their state polls live.
-//
-// It is deliberately NOT a hard block any more: the Hub's Settings, Dictionary
-// and history are useful with no permissions at all, and trapping the user on
-// this screen when macOS is being stubborn (see the relaunch note below) left
-// the rest of the app unreachable.
+// The permission gate. Steps unlock in order and their state polls live. Not a
+// hard block: Settings, Dictionary and History work with no permissions, so
+// "Skip" is always available.
 
 function Step({
   n,
   title,
   detail,
   done,
-  active,
   locked,
-  required,
-  onGrant,
+  optional,
+  action,
 }: {
   n: number;
   title: string;
   detail: string;
   done: boolean;
-  active: boolean;
   locked: boolean;
-  required: boolean;
-  onGrant: () => void;
+  optional?: boolean;
+  action: React.ReactNode;
 }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 16,
-        padding: "16px 18px",
-        borderRadius: 14,
-        marginBottom: 12,
-        background: active ? theme.accentSoft : theme.cardBg,
-        border: `1px solid ${active ? theme.accentSoftBorder : theme.border}`,
-        boxShadow: theme.shadowSoft,
-        opacity: locked ? 0.5 : 1,
-      }}
-    >
-      <div
-        style={{
-          flex: "0 0 auto",
-          width: 30,
-          height: 30,
-          borderRadius: 9999,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontWeight: 700,
-          fontSize: 14,
-          color: done ? "#fff" : theme.textMuted,
-          background: done ? theme.accentDeep : theme.track,
-        }}
-      >
-        {done ? "✓" : n}
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 15, fontWeight: 600, color: theme.textStrong }}>
-          {title}{" "}
-          <span style={{ fontSize: 12, color: theme.textFaint, fontWeight: 400 }}>
-            {required ? "· required" : "· optional"}
-          </span>
+    <div className={`row${locked ? " locked" : ""}`}>
+      <div className={`step-num${done ? " done" : ""}`}>{done ? "✓" : n}</div>
+      <div className="row-text">
+        <div className="row-label">
+          {title}
+          {optional && <span className="dict-auto">optional</span>}
         </div>
-        <div style={{ fontSize: 13, color: theme.textMuted, marginTop: 2 }}>{detail}</div>
+        <div className="row-hint">{detail}</div>
       </div>
-      {done ? (
-        <span style={{ color: theme.accentDeep, fontSize: 13, fontWeight: 600 }}>Granted</span>
-      ) : (
-        <button
-          onClick={onGrant}
-          disabled={locked}
-          style={{
-            cursor: locked ? "default" : "pointer",
-            border: "none",
-            borderRadius: 10,
-            padding: "9px 16px",
-            fontSize: 13,
-            fontWeight: 600,
-            fontFamily: font.ui,
-            color: "#fff",
-            background: locked ? theme.textFaint : palette.slate900,
-            whiteSpace: "nowrap",
-          }}
-        >
-          Grant
-        </button>
-      )}
+      <div className="row-control">{done ? <Status ok>Done</Status> : action}</div>
     </div>
   );
 }
@@ -132,111 +73,52 @@ function ModelStep({ n, locked }: { n: number; locked: boolean }) {
         setError(p.error ?? "Download failed");
       }
     }).then((u) => (stop2 = u));
-    return () => { stop1?.(); stop2?.(); };
+    return () => {
+      stop1?.();
+      stop2?.();
+    };
   }, [downloading]);
 
   const done = hasModel === true;
-  const active = !done && !locked;
-
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 16,
-        padding: "16px 18px",
-        borderRadius: 14,
-        marginBottom: 12,
-        background: active ? theme.accentSoft : theme.cardBg,
-        border: `1px solid ${active ? theme.accentSoftBorder : theme.border}`,
-        boxShadow: theme.shadowSoft,
-        opacity: locked ? 0.5 : 1,
-      }}
-    >
-      <div
-        style={{
-          flex: "0 0 auto",
-          width: 30,
-          height: 30,
-          borderRadius: 9999,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontWeight: 700,
-          fontSize: 14,
-          color: done ? "#fff" : theme.textMuted,
-          background: done ? theme.accentDeep : theme.track,
-        }}
-      >
-        {done ? "✓" : n}
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 15, fontWeight: 600, color: theme.textStrong }}>
-          Speech Model{" "}
-          <span style={{ fontSize: 12, color: theme.textFaint, fontWeight: 400 }}>· required for local ASR</span>
-        </div>
-        <div style={{ fontSize: 13, color: theme.textMuted, marginTop: 2 }}>
-          {downloading
-            ? `Downloading ggml-base.en.bin... ${percent}%`
-            : error
-              ? error
-              : "Downloads a 148 MB speech model for on-device transcription."}
+    <div className={`row${locked ? " locked" : ""}`}>
+      <div className={`step-num${done ? " done" : ""}`}>{done ? "✓" : n}</div>
+      <div className="row-text">
+        <div className="row-label">Speech model</div>
+        <div className="row-hint">
+          {downloading ? `Downloading, ${percent}%` : error ?? "A 148 MB model for on-device transcription."}
         </div>
         {downloading && (
-          <div style={{ marginTop: 6, height: 4, borderRadius: 2, background: theme.track, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${percent}%`, background: theme.accentDeep, borderRadius: 2, transition: "width 200ms ease" }} />
+          <div className="progress">
+            <div style={{ width: `${percent}%` }} />
           </div>
         )}
       </div>
-      {done ? (
-        <span style={{ color: theme.accentDeep, fontSize: 13, fontWeight: 600 }}>Installed</span>
-      ) : (
-        <button
-          onClick={() => {
-            setError(null);
-            setDownloading(true);
-            setPercent(0);
-            void downloadModel();
-          }}
-          disabled={locked || downloading}
-          style={{
-            cursor: locked || downloading ? "default" : "pointer",
-            border: "none",
-            borderRadius: 10,
-            padding: "9px 16px",
-            fontSize: 13,
-            fontWeight: 600,
-            fontFamily: font.ui,
-            color: "#fff",
-            background: locked || downloading ? theme.textFaint : palette.slate900,
-            whiteSpace: "nowrap",
-          }}
-        >
-          {downloading ? `${percent}%` : error ? "Retry" : "Download"}
-        </button>
-      )}
+      <div className="row-control">
+        {done ? (
+          <Status ok>Installed</Status>
+        ) : (
+          <Button
+            disabled={locked || downloading}
+            onClick={() => {
+              setError(null);
+              setDownloading(true);
+              setPercent(0);
+              void downloadModel();
+            }}
+          >
+            {error ? "Retry" : "Download"}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
 
-export function Onboarding({
-  status,
-  refresh,
-  onEnter,
-}: {
-  status: Status;
-  refresh: () => void;
-  onEnter: () => void;
-}) {
-  // A backstop poll. The state actually flips on the heartbeat Rust pushes at
-  // us (`permissions::watch` → `whimpr://permissions`), because this webview
-  // stops running timers within seconds of its window going away — and the
-  // reader grants the microphone from System Settings, i.e. with this window
-  // behind it or closed to the tray.
-  //
-  // Held in a ref so the interval survives re-renders instead of restarting its
-  // clock on each one; keyed on `[refresh]` it was rebuilt every render, and a
-  // poll that keeps resetting its own timer can be starved.
+export function Onboarding({ status, refresh, onEnter }: { status: StatusT; refresh: () => void; onEnter: () => void }) {
+  // Backstop poll. The real signal is the heartbeat Rust pushes, since this
+  // webview stops running timers when its window is hidden behind System
+  // Settings, which is exactly where the reader is while granting.
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
   useEffect(() => {
@@ -246,203 +128,77 @@ export function Onboarding({
 
   const acc = status.accessibility;
   const mic = status.microphone;
-  const inp = status.input_monitoring;
   const canEnter = acc && mic;
 
-  // The stale-grant case: macOS reports Accessibility as granted, but the Fn
-  // tap still can't be created because TCC is enforcing an earlier build's
-  // signature. Only flag it after a grace period — a fresh grant takes the
-  // tap thread a moment to spin up, and a false "still broken!" would undo
-  // the reassurance this screen exists to give.
+  // Stale grant: macOS says granted, but the key tap never came up because TCC
+  // is enforcing an older build's signature. Only flag after a grace period.
   const [accSince, setAccSince] = useState<number | null>(null);
   useEffect(() => {
     setAccSince((prev) => (acc ? (prev ?? Date.now()) : null));
   }, [acc]);
-  const staleGrant =
-    acc && !status.hotkey_wired && accSince !== null && Date.now() - accSince > 7000;
+  const staleGrant = acc && !status.hotkey_wired && accSince !== null && Date.now() - accSince > 7000;
 
   return (
-    <div
-      style={{
-        height: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: theme.pageBg,
-        color: theme.textBody,
-        fontFamily: font.ui,
-        padding: 24,
-      }}
-    >
-      <div style={{ width: 560, maxWidth: "100%" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-          <div style={{ fontFamily: font.serif, fontSize: 30, fontWeight: 600, color: theme.textStrong }}>
-            Set up WhimprFlow
-          </div>
-          <span
-            style={{
-              fontSize: 10,
-              fontWeight: 700,
-              letterSpacing: 0.4,
-              textTransform: "uppercase",
-              color: theme.accentDeep,
-              background: theme.accentSoft,
-              border: `1px solid ${theme.accentSoftBorder}`,
-              borderRadius: 999,
-              padding: "2px 7px",
-            }}
-          >
-            Local
-          </span>
-        </div>
-        <p style={{ color: theme.textMuted, lineHeight: 1.5, margin: "0 0 24px" }}>
-          Grant these to <b>WhimprFlow</b>, in order. Accessibility turns green here as soon as macOS
-          applies it. <b>Microphone usually needs a relaunch</b> — macOS decides an app's microphone
-          status when it starts and doesn't revisit it, so use Quit &amp; Reopen below after flipping
-          that one on.
+    <div className="setup">
+      <div className="setup-body">
+        <h1>Set up WhimprFlow</h1>
+        <p>
+          Two permissions and a model, in order. Accessibility applies the moment macOS grants it.
+          Microphone usually needs a relaunch, because macOS decides an app's microphone access
+          when it starts. Use Quit and Reopen after turning it on.
         </p>
 
         {staleGrant && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              padding: "14px 16px",
-              borderRadius: 12,
-              marginBottom: 14,
-              background: "#3a1517",
-              border: "1px solid #7f2a2e",
-              color: "#f3c9cc",
-              fontSize: 13,
-              lineHeight: 1.45,
-            }}
-          >
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <b>Accessibility looks granted, but the Fn key still isn&apos;t wired up.</b> macOS is
-              enforcing the permission of an older build of WhimprFlow. Click Fix to clear it, then
-              enable WhimprFlow again in the Accessibility pane that opens — no relaunch needed.
+          <div className="banner" style={{ borderRadius: 8, marginBottom: 14 }}>
+            <div className="banner-text">
+              <b>Accessibility is granted but the key is not wired up.</b>
+              <span>macOS is enforcing an older build's permission. Fix clears it and reopens the pane.</span>
             </div>
-            <button
-              onClick={() => void fixAccessibility()}
-              style={{
-                cursor: "pointer",
-                border: "none",
-                borderRadius: 10,
-                padding: "9px 16px",
-                fontSize: 13,
-                fontWeight: 600,
-                fontFamily: font.ui,
-                color: "#fff",
-                background: "#a13a40",
-                whiteSpace: "nowrap",
-              }}
-            >
-              Fix
-            </button>
+            <Button variant="danger" onClick={() => void fixAccessibility()}>Fix</Button>
           </div>
         )}
 
-        <Step
-          n={1}
-          title="Accessibility"
-          detail="Detects the Fn key in every app and types your words. This is the one that makes the Fn key work everywhere."
-          done={acc}
-          active={!acc}
-          locked={false}
-          required
-          onGrant={() => requestAccessibility()}
-        />
-        <Step
-          n={2}
-          title="Microphone"
-          // macOS can be answering about a different app entirely (whatever
-          // launched us), in which case granting WhimprFlow here can never turn
-          // this row green — so say whose switch actually counts rather than
-          // repeating "not granted" at someone doing everything right.
-          detail={status.microphone_hint ?? "Lets WhimprFlow hear what you say."}
-          done={mic}
-          active={acc && !mic}
-          locked={!acc}
-          required
-          onGrant={() => requestMicrophone()}
-        />
-        <ModelStep n={3} locked={!(acc && mic)} />
-        <Step
-          n={4}
-          title="Input Monitoring"
-          detail="Extra reliability for key detection. Optional — you can enter without it."
-          done={inp}
-          active={acc && mic && !inp}
-          locked={!(acc && mic)}
-          required={false}
-          onGrant={() => requestInputMonitoring()}
-        />
+        <Group>
+          <Step
+            n={1}
+            title="Accessibility"
+            detail="Reads the dictation key in every app and types your words."
+            done={acc}
+            locked={false}
+            action={<Button onClick={() => requestAccessibility()}>Grant</Button>}
+          />
+          <Step
+            n={2}
+            title="Microphone"
+            detail={status.microphone_hint ?? "Hears what you say."}
+            done={mic}
+            locked={!acc}
+            action={<Button disabled={!acc} onClick={() => requestMicrophone()}>Grant</Button>}
+          />
+          <ModelStep n={3} locked={!(acc && mic)} />
+          <Step
+            n={4}
+            title="Input Monitoring"
+            detail="Makes key detection more reliable."
+            done={status.input_monitoring}
+            locked={!(acc && mic)}
+            optional
+            action={<Button disabled={!(acc && mic)} onClick={() => requestInputMonitoring()}>Grant</Button>}
+          />
+        </Group>
 
-        <button
-          onClick={onEnter}
-          disabled={!canEnter}
-          style={{
-            marginTop: 12,
-            width: "100%",
-            cursor: canEnter ? "pointer" : "default",
-            border: "none",
-            borderRadius: 12,
-            padding: "13px",
-            fontSize: 15,
-            fontWeight: 700,
-            fontFamily: font.ui,
-            color: "#fff",
-            background: canEnter ? theme.accentDeep : theme.textFaint,
-          }}
-        >
-          {canEnter ? "Enter WhimprFlow →" : "Grant Accessibility + Microphone to continue"}
-        </button>
-
-        <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-          <button
-            onClick={() => void restartApp()}
-            style={{
-              flex: 1,
-              cursor: "pointer",
-              border: `1px solid ${theme.borderStrong}`,
-              borderRadius: 12,
-              padding: "11px",
-              fontSize: 13.5,
-              fontWeight: 600,
-              fontFamily: font.ui,
-              color: theme.textBody,
-              background: "transparent",
-            }}
-          >
-            Quit &amp; Reopen
-          </button>
-          {/* Always available. A permission problem should never make the rest of
-              the app unreachable — Settings, Dictionary and history all work
-              without any grant at all. */}
-          <button
-            onClick={onEnter}
-            style={{
-              flex: 1,
-              cursor: "pointer",
-              border: `1px solid ${theme.borderStrong}`,
-              borderRadius: 12,
-              padding: "11px",
-              fontSize: 13.5,
-              fontWeight: 600,
-              fontFamily: font.ui,
-              color: theme.textBody,
-              background: "transparent",
-            }}
-          >
-            Skip for now →
-          </button>
+        <div className="setup-actions">
+          <Button size="lg" onClick={() => void restartApp()}>Quit and Reopen</Button>
+          {canEnter ? (
+            <Button size="lg" variant="primary" onClick={onEnter}>Start using WhimprFlow</Button>
+          ) : (
+            <Button size="lg" onClick={onEnter}>Skip for now</Button>
+          )}
         </div>
 
-        <p style={{ fontSize: 12, color: theme.textFaint, lineHeight: 1.5, marginTop: 16 }}>
-          If Accessibility stays grey even though System Settings shows it enabled, click Grant
-          again — WhimprFlow clears macOS&apos;s stale entry for older builds automatically and
-          re-prompts.
+        <p className="hint" style={{ marginTop: 16 }}>
+          If Accessibility stays off even though System Settings shows it on, click Grant again.
+          WhimprFlow clears the stale entry from older builds and asks again.
         </p>
       </div>
     </div>

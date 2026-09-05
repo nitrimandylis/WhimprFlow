@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react";
-import { font } from "../tokens/values";
-import { theme, applyTheme, getStoredTheme, type ThemeMode } from "./theme";
-import { Button, Card, Dot, PageTitle, Segmented } from "./ui";
+import { Button, Group, GroupTitle, Note, PageHeader, Row, Select, Status, Switch } from "./ui";
 import {
   LANGUAGES,
   listMicrophones,
@@ -11,80 +9,47 @@ import {
   requestMicrophone,
   resetPillPosition,
   setApiKey,
+  type Appearance,
   type AsrMode,
   type CleanupLevel,
   type CleanupMode,
-  type PushToTalkKey,
   type Settings,
-  type Status,
+  type Status as StatusT,
 } from "./api";
 
-const ASR_MODES: { value: AsrMode; label: string; hint: string }[] = [
-  { value: "local", label: "Local", hint: "On-device Whisper (offline, needs a model file in %APPDATA%\\WhimprFlow\\models\\)" },
-  { value: "cloud", label: "Cloud", hint: "Fast cloud transcription via OpenAI or an OpenAI-compatible API like Groq. Uses the cloud ASR key below, or the OpenAI key if none is set." },
+const APPEARANCES: { value: Appearance; label: string }[] = [
+  { value: "system", label: "Match system" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
 ];
 
-const selectStyle: React.CSSProperties = {
-  fontFamily: font.ui,
-  fontSize: 13.5,
-  color: theme.textBody,
-  background: theme.cardBgSubtle,
-  border: `1px solid ${theme.borderStrong}`,
-  borderRadius: 9,
-  padding: "7px 10px",
-  minWidth: 210,
-  cursor: "pointer",
+const ASR_MODES: { value: AsrMode; label: string }[] = [
+  { value: "local", label: "On this Mac" },
+  { value: "cloud", label: "Cloud" },
+];
+
+const MODES: { value: CleanupMode; label: string }[] = [
+  { value: "raw", label: "Off" },
+  { value: "local", label: "On this Mac" },
+  { value: "open_ai", label: "OpenAI" },
+  { value: "anthropic", label: "Anthropic" },
+];
+
+const LEVELS: { value: CleanupLevel; label: string }[] = [
+  { value: "none", label: "None" },
+  { value: "light", label: "Light" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+];
+
+const LEVEL_HINT: Record<CleanupLevel, string> = {
+  none: "Types exactly what was heard, mistakes included.",
+  light: "Removes fillers and fixes grammar. Leaves wording alone.",
+  medium: "Also edits for clarity and length.",
+  high: "Rewrites for brevity and polish.",
 };
 
-/// A labelled settings row: title + explanatory hint on the left, control right.
-function Row({
-  title,
-  hint,
-  children,
-}: {
-  title: string;
-  hint: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
-      <div style={{ fontSize: 14, fontWeight: 600, color: theme.textStrong }}>
-        {title}
-        <div style={{ fontSize: 12, fontWeight: 400, color: theme.textMuted, marginTop: 2 }}>
-          {hint}
-        </div>
-      </div>
-      {children}
-    </div>
-  );
-}
-
-const MODES: { value: CleanupMode; label: string; hint: string }[] = [
-  { value: "raw", label: "Raw", hint: "Paste exactly what you said" },
-  { value: "local", label: "Local", hint: "On-device model (offline)" },
-  { value: "open_ai", label: "OpenAI", hint: "Cloud cleanup via OpenAI (or an OpenAI-compatible API like OpenRouter — set the base URL below)" },
-  { value: "anthropic", label: "Anthropic", hint: "Cloud cleanup via Claude" },
-];
-
-const LEVELS: { value: CleanupLevel; label: string; hint: string }[] = [
-  { value: "none", label: "None", hint: "Transcribe exactly what you said, including mistakes." },
-  { value: "light", label: "Light", hint: "Clean up filler words and grammar. (Recommended)" },
-  { value: "medium", label: "Medium", hint: "Edit for clarity and conciseness." },
-  { value: "high", label: "High", hint: "Rewrite for brevity and polish." },
-];
-
-function SectionTitle({ children, sub }: { children: React.ReactNode; sub?: string }) {
-  return (
-    <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 15, fontWeight: 600, color: theme.textStrong }}>{children}</div>
-      {sub && <div style={{ color: theme.textMuted, fontSize: 13, marginTop: 4 }}>{sub}</div>}
-    </div>
-  );
-}
-
 // A physical key from a KeyboardEvent.code, as a Tauri accelerator key name.
-// Returns null for a bare modifier press (so the recorder keeps listening) and
-// for keys we don't want to bind.
 function keyNameFromCode(code: string): string | null {
   if (code === "Space") return "Space";
   if (/^Key[A-Z]$/.test(code)) return code.slice(3);
@@ -93,9 +58,8 @@ function keyNameFromCode(code: string): string | null {
   return null;
 }
 
-// A KeyboardEvent → a Tauri accelerator string ("CmdOrCtrl+Shift+Space"), or
-// null if it isn't a valid global shortcut yet (no non-modifier key, or no
-// modifier — a bare key makes a terrible global hotkey).
+// A KeyboardEvent as a Tauri accelerator string, or null until a modifier
+// plus a real key is down. A bare key makes a terrible global hotkey.
 function acceleratorFromEvent(e: KeyboardEvent): string | null {
   const key = keyNameFromCode(e.code);
   if (!key) return null;
@@ -109,84 +73,42 @@ function acceleratorFromEvent(e: KeyboardEvent): string | null {
   return parts.join("+");
 }
 
-const ACCELERATOR_SYMBOLS: Record<string, string> = {
-  CmdOrCtrl: "⌘",
-  Cmd: "⌘",
-  Command: "⌘",
-  Super: "⌘",
-  Ctrl: "⌃",
-  Control: "⌃",
-  Alt: "⌥",
-  Option: "⌥",
-  Shift: "⇧",
+const SYMBOLS: Record<string, string> = {
+  CmdOrCtrl: "⌘", Cmd: "⌘", Command: "⌘", Super: "⌘",
+  Ctrl: "⌃", Control: "⌃", Alt: "⌥", Option: "⌥", Shift: "⇧",
 };
 
 function prettyAccelerator(accelerator: string): string {
-  if (!accelerator.trim()) return "Off";
-  return accelerator
-    .split("+")
-    .map((part) => ACCELERATOR_SYMBOLS[part] ?? part)
-    .join(" ");
+  if (!accelerator.trim()) return "None";
+  return accelerator.split("+").map((p) => SYMBOLS[p] ?? p).join(" ");
 }
 
-// "Speak without having to hold down fn … a combination of buttons … with
-// customization in settings" (Publik Test 2). Click to record a new shortcut;
-// the next modifier+key you press becomes it. Esc while recording cancels.
-function HandsFreeHotkeyRow({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (accelerator: string) => void;
-}) {
+function HotkeyRecorder({ value, onChange }: { value: string; onChange: (a: string) => void }) {
   const [recording, setRecording] = useState(false);
-
   useEffect(() => {
     if (!recording) return;
     const onKeyDown = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      if (e.key === "Escape") {
-        setRecording(false);
-        return;
-      }
-      const accelerator = acceleratorFromEvent(e);
-      if (accelerator) {
-        onChange(accelerator);
+      if (e.key === "Escape") return setRecording(false);
+      const acc = acceleratorFromEvent(e);
+      if (acc) {
+        onChange(acc);
         setRecording(false);
       }
-      // Otherwise a bare modifier is still held — keep listening for the key.
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [recording, onChange]);
-
   return (
-    <Card style={{ marginBottom: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: theme.textStrong }}>
-            Hands-free shortcut
-          </div>
-          <div style={{ color: theme.textMuted, fontSize: 13, marginTop: 4 }}>
-            Press it once to start talking with no key held, again to stop. Holding Fn
-            (push-to-talk) and double-tapping Fn still work too.
-          </div>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "0 0 auto" }}>
-          <Button onClick={() => setRecording((on) => !on)}>
-            {recording ? "Press keys…" : prettyAccelerator(value)}
-          </Button>
-          {value.trim() !== "" && !recording && (
-            <Button onClick={() => onChange("")}>Off</Button>
-          )}
-        </div>
-      </div>
-    </Card>
+    <>
+      {value.trim() !== "" && !recording && <Button variant="plain" onClick={() => onChange("")}>Remove</Button>}
+      <Button onClick={() => setRecording((on) => !on)}>{recording ? "Press keys…" : prettyAccelerator(value)}</Button>
+    </>
   );
 }
 
-function KeyField({
+function KeyRow({
   label,
   configured,
   onSave,
@@ -196,89 +118,45 @@ function KeyField({
   onSave: (key: string) => Promise<void>;
 }) {
   const [value, setValue] = useState("");
-  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [error, setError] = useState(false);
   return (
-    <div style={{ marginTop: 16 }}>
-      <div style={{ fontSize: 13, marginBottom: 7, display: "flex", alignItems: "center", color: theme.textBody }}>
-        <Dot ok={configured} />
-        {label} {configured ? "— configured" : "— not set"}
-      </div>
-      <div style={{ display: "flex", gap: 8 }}>
-        <input
-          type="password"
-          value={value}
-          placeholder={configured ? "Enter a new key to replace" : "Paste your API key"}
-          onChange={(e) => {
-            setValue(e.target.value);
-            setStatus("idle");
-          }}
-          style={{
-            flex: 1,
-            background: theme.cardBgSubtle,
-            border: `1px solid ${theme.border}`,
-            borderRadius: 10,
-            padding: "9px 12px",
-            color: theme.textBody,
-            fontFamily: font.mono,
-            fontSize: 13,
-            outline: "none",
-          }}
-        />
-        <Button
-          onClick={async () => {
-            setStatus("saving");
-            try {
-              await onSave(value);
-              setValue("");
-              setStatus("saved");
-            } catch (e) {
-              console.error("save key failed", e);
-              setStatus("error");
-            }
-          }}
-        >
-          Save
-        </Button>
-      </div>
-      {status === "saved" && (
-        <div style={{ fontSize: 12, color: theme.accentDeep, marginTop: 6 }}>Saved to keychain ✓</div>
-      )}
-      {status === "error" && (
-        <div style={{ fontSize: 12, color: "#e5484d", marginTop: 6 }}>
-          Couldn't save — the OS credential store may be unavailable. Check the app's console output.
-        </div>
-      )}
-    </div>
+    <Row
+      label={label}
+      hint={error ? "Could not save. The keychain may be unavailable." : configured ? "Saved in the macOS keychain." : "Not set."}
+    >
+      <input
+        type="password"
+        className="mono"
+        value={value}
+        placeholder={configured ? "Replace key" : "Paste key"}
+        onChange={(e) => {
+          setValue(e.target.value);
+          setError(false);
+        }}
+        style={{ width: 200 }}
+      />
+      <Button
+        disabled={!value}
+        onClick={async () => {
+          try {
+            await onSave(value);
+            setValue("");
+          } catch {
+            setError(true);
+          }
+        }}
+      >
+        Save
+      </Button>
+    </Row>
   );
 }
 
-function PermRow({
-  ok,
-  label,
-  detail,
-  onClick,
-}: {
-  ok: boolean;
-  label: string;
-  detail: string;
-  onClick: () => void;
-}) {
+function PermRow({ ok, label, detail, onClick }: { ok: boolean; label: string; detail: string; onClick: () => void }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", fontSize: 13 }}>
-        <Dot ok={ok} />
-        <span style={{ color: theme.textBody }}>
-          <b>{label}</b> <span style={{ color: theme.textMuted }}>— {detail}</span>
-        </span>
-      </div>
-      {ok ? (
-        <span style={{ color: theme.accentDeep, fontSize: 13, fontWeight: 600 }}>Granted</span>
-      ) : (
-        <Button variant="ghost" size="sm" onClick={onClick}>
-          Grant
-        </Button>
-      )}
-    </div>
+    <Row label={label} hint={detail}>
+      {ok ? <Status ok>Granted</Status> : <Button onClick={onClick}>Grant</Button>}
+    </Row>
   );
 }
 
@@ -290,472 +168,184 @@ export function SettingsPane({
 }: {
   settings: Settings;
   onChange: (s: Settings) => void;
-  status: Status;
+  status: StatusT;
   refresh: () => void;
 }) {
   const [mics, setMics] = useState<string[]>([]);
   useEffect(() => {
     void listMicrophones().then(setMics);
   }, []);
-  const [appearance, setAppearance] = useState<ThemeMode>(getStoredTheme());
+  const micOptions = [{ value: "", label: "System default" }, ...mics.map((m) => ({ value: m, label: m }))];
+  const set = <K extends keyof Settings>(k: K, v: Settings[K]) => onChange({ ...settings, [k]: v });
 
   return (
-    <div style={{ maxWidth: 720 }}>
-      <PageTitle>Settings</PageTitle>
+    <>
+      <PageHeader title="Settings" />
+      <div className="pane-scroll">
+        <div className="form">
+          <GroupTitle>Dictation</GroupTitle>
+          <Group>
+            <Row label="Hold to talk" hint="Only modifier keys work here. If double-tapping fn opens Apple Dictation, turn that off in System Settings › Keyboard.">
+              <Select label="Hold to talk key" value={settings.push_to_talk_key} options={PTT_KEYS} onChange={(v) => set("push_to_talk_key", v)} />
+            </Row>
+            <Row label="Hands-free shortcut" hint="Press once to start, again to stop. Double-tapping the key above also works.">
+              <HotkeyRecorder value={settings.hands_free_hotkey ?? ""} onChange={(a) => set("hands_free_hotkey", a)} />
+            </Row>
+            <Row label="Language" hint="Needs a multilingual model. Models ending in .en are English only.">
+              <Select label="Language" value={settings.language} options={LANGUAGES} onChange={(v) => set("language", v)} />
+            </Row>
+            <Row label="Microphone" hint="Falls back to the system default if this device is unplugged.">
+              <Select label="Microphone" value={settings.microphone} options={micOptions} onChange={(v) => set("microphone", v)} />
+            </Row>
+            <Row label="Sounds" hint="A click when recording starts and when text lands.">
+              <Switch label="Sounds" checked={settings.sound_on_start} onChange={(v) => set("sound_on_start", v)} />
+            </Row>
+          </Group>
 
-      <Card style={{ marginBottom: 16 }}>
-        <SectionTitle sub="Switch between the warm light theme and a low-glare dark theme.">
-          Appearance
-        </SectionTitle>
-        <Segmented
-          options={[
-            { value: "light", label: "Light" },
-            { value: "dark", label: "Dark" },
-          ]}
-          value={appearance}
-          onChange={(v) => {
-            setAppearance(v);
-            applyTheme(v);
-          }}
-        />
-      </Card>
+          <GroupTitle>Speech to text</GroupTitle>
+          <Group>
+            <Row label="Engine" hint={settings.asr_mode === "local" ? "Whisper runs on this Mac. Works offline." : "An OpenAI-compatible transcription API, such as Groq."}>
+              <Select label="Speech engine" value={settings.asr_mode} options={ASR_MODES} onChange={(v) => set("asr_mode", v)} />
+            </Row>
+            {settings.asr_mode === "cloud" && (
+              <>
+                <Row label="Server" hint="Leave blank for OpenAI.">
+                  <input type="text" className="mono" value={settings.asr_base_url} placeholder="https://api.groq.com/openai/v1" onChange={(e) => set("asr_base_url", e.target.value)} style={{ width: 260 }} />
+                </Row>
+                <Row label="Model">
+                  <input type="text" className="mono" value={settings.asr_model} placeholder="whisper-large-v3-turbo" onChange={(e) => set("asr_model", e.target.value)} style={{ width: 260 }} />
+                </Row>
+                <KeyRow
+                  label="API key"
+                  configured={status.has_asr_key}
+                  onSave={async (k) => {
+                    await setApiKey("asr", k);
+                    setTimeout(refresh, 400);
+                  }}
+                />
+              </>
+            )}
+          </Group>
 
-      <Card style={{ marginBottom: 16 }}>
-        <SectionTitle sub="Which engine turns your speech into text.">Speech-to-Text</SectionTitle>
-        <Segmented
-          options={ASR_MODES.map((m) => ({ value: m.value, label: m.label }))}
-          value={settings.asr_mode}
-          onChange={(v) => onChange({ ...settings, asr_mode: v })}
-        />
-        <div style={{ color: theme.textMuted, fontSize: 12.5, marginTop: 10 }}>
-          {ASR_MODES.find((m) => m.value === settings.asr_mode)?.hint}
-        </div>
-        {settings.asr_mode === "cloud" && (
-          <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 12.5, color: theme.textMuted, marginBottom: 6 }}>
-                Base URL (blank = OpenAI; e.g. https://api.groq.com/openai/v1 for Groq)
-              </div>
-              <input
-                type="text"
-                value={settings.asr_base_url}
-                placeholder="https://api.groq.com/openai/v1"
-                onChange={(e) => onChange({ ...settings, asr_base_url: e.target.value })}
-                style={{
-                  width: "100%",
-                  background: theme.cardBgSubtle,
-                  border: `1px solid ${theme.border}`,
-                  borderRadius: 10,
-                  padding: "9px 12px",
-                  color: theme.textBody,
-                  fontFamily: font.mono,
-                  fontSize: 13,
-                  outline: "none",
-                  boxSizing: "border-box",
-                }}
-              />
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 12.5, color: theme.textMuted, marginBottom: 6 }}>
-                Model (e.g. whisper-large-v3-turbo for Groq, whisper-1 for OpenAI)
-              </div>
-              <input
-                type="text"
-                value={settings.asr_model}
-                placeholder="whisper-large-v3-turbo"
-                onChange={(e) => onChange({ ...settings, asr_model: e.target.value })}
-                style={{
-                  width: "100%",
-                  background: theme.cardBgSubtle,
-                  border: `1px solid ${theme.border}`,
-                  borderRadius: 10,
-                  padding: "9px 12px",
-                  color: theme.textBody,
-                  fontFamily: font.mono,
-                  fontSize: 13,
-                  outline: "none",
-                  boxSizing: "border-box",
-                }}
-              />
-            </div>
-          </div>
-        )}
-        {settings.asr_mode === "cloud" && (
-          <KeyField
-            label="Cloud ASR API key (e.g. Groq)"
-            configured={status.has_asr_key}
-            onSave={async (k) => {
-              await setApiKey("asr", k);
-              setTimeout(refresh, 400);
-            }}
-          />
-        )}
-      </Card>
+          <GroupTitle>Cleanup</GroupTitle>
+          <Group>
+            <Row label="Engine" hint="Removes fillers, applies self-corrections, adds punctuation.">
+              <Select label="Cleanup engine" value={settings.cleanup_mode} options={MODES} onChange={(v) => set("cleanup_mode", v)} />
+            </Row>
+            {settings.cleanup_mode !== "raw" && (
+              <Row label="Strength" hint={LEVEL_HINT[settings.cleanup_level]}>
+                <Select label="Cleanup strength" value={settings.cleanup_level} options={LEVELS} onChange={(v) => set("cleanup_level", v)} />
+              </Row>
+            )}
+            {settings.cleanup_mode === "open_ai" && (
+              <>
+                <Row label="Server" hint="Leave blank for OpenAI, or any compatible API such as OpenRouter.">
+                  <input type="text" className="mono" value={settings.openai_base_url} placeholder="https://openrouter.ai/api/v1" onChange={(e) => set("openai_base_url", e.target.value)} style={{ width: 260 }} />
+                </Row>
+                <Row label="Model">
+                  <input type="text" className="mono" value={settings.openai_model} placeholder="gpt-4o-mini" onChange={(e) => set("openai_model", e.target.value)} style={{ width: 260 }} />
+                </Row>
+                <KeyRow
+                  label="OpenAI API key"
+                  configured={status.has_openai_key}
+                  onSave={async (k) => {
+                    await setApiKey("openai", k);
+                    setTimeout(refresh, 400);
+                  }}
+                />
+              </>
+            )}
+            {settings.cleanup_mode === "anthropic" && (
+              <>
+                <Row label="Model">
+                  <input type="text" className="mono" value={settings.anthropic_model} placeholder="claude-haiku-4-5" onChange={(e) => set("anthropic_model", e.target.value)} style={{ width: 260 }} />
+                </Row>
+                <KeyRow
+                  label="Anthropic API key"
+                  configured={status.has_anthropic_key}
+                  onSave={async (k) => {
+                    await setApiKey("anthropic", k);
+                    setTimeout(refresh, 400);
+                  }}
+                />
+              </>
+            )}
+          </Group>
 
-      <Card style={{ marginBottom: 16 }}>
-        <SectionTitle sub="Where your dictation is cleaned up before it's typed.">Cleanup Engine</SectionTitle>
-        <Segmented
-          options={MODES.map((m) => ({ value: m.value, label: m.label }))}
-          value={settings.cleanup_mode}
-          onChange={(v) => onChange({ ...settings, cleanup_mode: v })}
-        />
-        <div style={{ color: theme.textMuted, fontSize: 12.5, marginTop: 10 }}>
-          {MODES.find((m) => m.value === settings.cleanup_mode)?.hint}
-        </div>
+          <GroupTitle>Pill</GroupTitle>
+          <Group>
+            <Row label="Always show" hint="Off hides the pill until a dictation starts.">
+              <Switch label="Always show pill" checked={settings.show_pill_always} onChange={(v) => set("show_pill_always", v)} />
+            </Row>
+            <Row label="Follow the active display" hint="Otherwise it stays on the main display.">
+              <Switch label="Follow the active display" checked={settings.pill_follows_active_display} onChange={(v) => set("pill_follows_active_display", v)} />
+            </Row>
+            <Row label="Gap above the Dock" hint={`${Math.round(settings.pill_bottom_inset)} pt`}>
+              <input type="range" aria-label="Gap above the Dock" min={8} max={220} step={4} value={settings.pill_bottom_inset} onChange={(e) => set("pill_bottom_inset", Number(e.currentTarget.value))} />
+            </Row>
+            {settings.pill_pos && (
+              <Row label="Position" hint="Pinned where you dragged it. The options above are paused.">
+                <Button
+                  onClick={() => {
+                    void resetPillPosition();
+                    set("pill_pos", null);
+                  }}
+                >
+                  Reset
+                </Button>
+              </Row>
+            )}
+          </Group>
 
-        <KeyField
-          label="OpenAI API key"
-          configured={status.has_openai_key}
-          onSave={async (k) => {
-            await setApiKey("openai", k);
-            setTimeout(refresh, 400);
-          }}
-        />
-        <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 12.5, color: theme.textMuted, marginBottom: 6 }}>
-              Base URL (blank = OpenAI; e.g. https://openrouter.ai/api/v1 for OpenRouter)
-            </div>
-            <input
-              type="text"
-              value={settings.openai_base_url}
-              placeholder="https://openrouter.ai/api/v1"
-              onChange={(e) => onChange({ ...settings, openai_base_url: e.target.value })}
-              style={{
-                width: "100%",
-                background: theme.cardBgSubtle,
-                border: `1px solid ${theme.border}`,
-                borderRadius: 10,
-                padding: "9px 12px",
-                color: theme.textBody,
-                fontFamily: font.mono,
-                fontSize: 13,
-                outline: "none",
-                boxSizing: "border-box",
+          <GroupTitle>App</GroupTitle>
+          <Group>
+            <Row label="Appearance">
+              <Select label="Appearance" value={settings.appearance} options={APPEARANCES} onChange={(v) => set("appearance", v)} />
+            </Row>
+            <Row label="Open at login">
+              <Switch label="Open at login" checked={settings.launch_at_login} onChange={(v) => set("launch_at_login", v)} />
+            </Row>
+            <Row label="Show in Dock" hint="Off makes WhimprFlow a menu bar app.">
+              <Switch label="Show in Dock" checked={settings.show_in_dock} onChange={(v) => set("show_in_dock", v)} />
+            </Row>
+            <Row label="Keep history" hint="Stores the text of your last 500 dictations on this Mac. Off keeps only counts and timing.">
+              <Switch label="Keep history" checked={settings.save_history} onChange={(v) => set("save_history", v)} />
+            </Row>
+          </Group>
+
+          <GroupTitle>Permissions</GroupTitle>
+          <Group>
+            <PermRow
+              ok={status.accessibility}
+              label="Accessibility"
+              detail="Reads the dictation key in every app and types your words."
+              onClick={() => {
+                requestAccessibility();
+                setTimeout(refresh, 800);
               }}
             />
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 12.5, color: theme.textMuted, marginBottom: 6 }}>
-              Model (e.g. an OpenRouter model slug)
-            </div>
-            <input
-              type="text"
-              value={settings.openai_model}
-              placeholder="meta-llama/llama-3.3-70b-instruct:free"
-              onChange={(e) => onChange({ ...settings, openai_model: e.target.value })}
-              style={{
-                width: "100%",
-                background: theme.cardBgSubtle,
-                border: `1px solid ${theme.border}`,
-                borderRadius: 10,
-                padding: "9px 12px",
-                color: theme.textBody,
-                fontFamily: font.mono,
-                fontSize: 13,
-                outline: "none",
-                boxSizing: "border-box",
+            <PermRow
+              ok={status.microphone}
+              label="Microphone"
+              detail={status.microphone ? "Hears what you say." : (status.microphone_hint ?? "Hears what you say.")}
+              onClick={() => {
+                requestMicrophone();
+                setTimeout(refresh, 1000);
               }}
             />
-          </div>
-        </div>
-        <KeyField
-          label="Anthropic API key"
-          configured={status.has_anthropic_key}
-          onSave={async (k) => {
-            await setApiKey("anthropic", k);
-            setTimeout(refresh, 400);
-          }}
-        />
-      </Card>
-
-      <Card style={{ marginBottom: 16 }}>
-        <SectionTitle>Auto Cleanup</SectionTitle>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {LEVELS.map((l) => {
-            const selected = settings.cleanup_level === l.value;
-            return (
-              <button
-                key={l.value}
-                onClick={() => onChange({ ...settings, cleanup_level: l.value })}
-                style={{
-                  textAlign: "left",
-                  cursor: "pointer",
-                  borderRadius: 12,
-                  padding: "12px 14px",
-                  fontFamily: font.ui,
-                  background: selected ? theme.accentSoft : theme.cardBgSubtle,
-                  border: `1px solid ${selected ? theme.accentSoftBorder : theme.border}`,
-                  color: theme.textBody,
-                }}
-              >
-                <div style={{ fontSize: 14, fontWeight: 600, color: theme.textStrong }}>{l.label}</div>
-                <div style={{ fontSize: 12.5, color: theme.textMuted, marginTop: 2 }}>{l.hint}</div>
-              </button>
-            );
-          })}
-        </div>
-      </Card>
-
-      <Card style={{ marginBottom: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: theme.textStrong }}>
-            Dictation sounds
-            <div style={{ fontSize: 12, fontWeight: 400, color: theme.textMuted, marginTop: 2 }}>
-              A soft click when recording starts, a lighter one when the text lands, and a duller
-              one if you cancel.
-            </div>
-          </div>
-          <Segmented
-            options={[
-              { value: "on", label: "On" },
-              { value: "off", label: "Off" },
-            ]}
-            value={settings.sound_on_start ? "on" : "off"}
-            onChange={(v) => onChange({ ...settings, sound_on_start: v === "on" })}
-          />
-        </div>
-      </Card>
-
-      <HandsFreeHotkeyRow
-        value={settings.hands_free_hotkey ?? ""}
-        onChange={(accelerator) => onChange({ ...settings, hands_free_hotkey: accelerator })}
-      />
-
-      <Card style={{ marginBottom: 16 }}>
-        <SectionTitle sub="How you start a dictation and what WhimprFlow listens to.">
-          Dictation
-        </SectionTitle>
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <Row
-            title="Push-to-talk key"
-            hint="Hold this key to dictate; double-tap it for hands-free. Only modifier keys can be used — they are the ones the key tap can see without intercepting your typing. If double-tapping Fn opens Apple Dictation instead, set System Settings → Keyboard → Dictation shortcut to Off and “Press 🌐 key to” to Do Nothing."
-          >
-            <select
-              value={settings.push_to_talk_key}
-              onChange={(e) =>
-                onChange({ ...settings, push_to_talk_key: e.currentTarget.value as PushToTalkKey })
-              }
-              style={selectStyle}
-            >
-              {PTT_KEYS.map((k) => (
-                <option key={k.value} value={k.value}>
-                  {k.label}
-                </option>
-              ))}
-            </select>
-          </Row>
-
-          <Row
-            title="Language"
-            hint="Needs a multilingual model. ggml-large-v3-turbo is multilingual; any model ending in .en is English-only and ignores this."
-          >
-            <select
-              value={settings.language}
-              onChange={(e) => onChange({ ...settings, language: e.currentTarget.value })}
-              style={selectStyle}
-            >
-              {LANGUAGES.map((l) => (
-                <option key={l.value} value={l.value}>
-                  {l.label}
-                </option>
-              ))}
-            </select>
-          </Row>
-
-          <Row title="Microphone" hint="Falls back to the system default if the chosen device is unplugged.">
-            <select
-              value={settings.microphone}
-              onChange={(e) => onChange({ ...settings, microphone: e.currentTarget.value })}
-              style={selectStyle}
-            >
-              <option value="">System default</option>
-              {mics.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </Row>
-        </div>
-      </Card>
-
-      <Card style={{ marginBottom: 16 }}>
-        <SectionTitle sub="How WhimprFlow behaves as a Mac app.">System</SectionTitle>
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <Row title="Launch at login" hint="Starts WhimprFlow automatically when you log in.">
-            <Segmented
-              options={[
-                { value: "on", label: "On" },
-                { value: "off", label: "Off" },
-              ]}
-              value={settings.launch_at_login ? "on" : "off"}
-              onChange={(v) => onChange({ ...settings, launch_at_login: v === "on" })}
+            <PermRow
+              ok={status.input_monitoring}
+              label="Input Monitoring"
+              detail="Optional. Makes key detection more reliable."
+              onClick={() => {
+                requestInputMonitoring();
+                setTimeout(refresh, 1000);
+              }}
             />
-          </Row>
-          <Row title="Show in Dock" hint="Off makes WhimprFlow a menu-bar-only app.">
-            <Segmented
-              options={[
-                { value: "on", label: "On" },
-                { value: "off", label: "Off" },
-              ]}
-              value={settings.show_in_dock ? "on" : "off"}
-              onChange={(v) => onChange({ ...settings, show_in_dock: v === "on" })}
-            />
-          </Row>
-          <Row
-            title="Keep dictation history"
-            hint="Stores the text of your last 500 dictations on this Mac for the Home history list. Off keeps only word counts and timing."
-          >
-            <Segmented
-              options={[
-                { value: "on", label: "On" },
-                { value: "off", label: "Off" },
-              ]}
-              value={settings.save_history ? "on" : "off"}
-              onChange={(v) => onChange({ ...settings, save_history: v === "on" })}
-            />
-          </Row>
+          </Group>
+          <Note>Status updates within a few seconds of a change in System Settings.</Note>
         </div>
-      </Card>
-
-      <Card style={{ marginBottom: 16 }}>
-        <SectionTitle sub="The Flow Bar is the small pill that shows idle / recording / cleaning up. Drag it anywhere; drop it back near the bottom centre to re-anchor.">
-          Flow Bar
-        </SectionTitle>
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: theme.textStrong }}>
-              Show the Flow Bar at all times
-              <div style={{ fontSize: 12, fontWeight: 400, color: theme.textMuted, marginTop: 2 }}>
-                Off hides the pill until you start dictating.
-              </div>
-            </div>
-            <Segmented
-              options={[
-                { value: "on", label: "On" },
-                { value: "off", label: "Off" },
-              ]}
-              value={settings.show_pill_always ? "on" : "off"}
-              onChange={(v) => onChange({ ...settings, show_pill_always: v === "on" })}
-            />
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: theme.textStrong }}>
-              Follow the active display
-              <div style={{ fontSize: 12, fontWeight: 400, color: theme.textMuted, marginTop: 2 }}>
-                Put the pill on the screen you're working on instead of the primary one.
-              </div>
-            </div>
-            <Segmented
-              options={[
-                { value: "on", label: "On" },
-                { value: "off", label: "Off" },
-              ]}
-              value={settings.pill_follows_active_display ? "on" : "off"}
-              onChange={(v) =>
-                onChange({ ...settings, pill_follows_active_display: v === "on" })
-              }
-            />
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: theme.textStrong }}>
-              Gap above the Dock
-              <div style={{ fontSize: 12, fontWeight: 400, color: theme.textMuted, marginTop: 2 }}>
-                Measured from the top of the Dock, not the screen edge. Currently{" "}
-                {Math.round(settings.pill_bottom_inset)} pt.
-              </div>
-            </div>
-            <input
-              type="range"
-              min={8}
-              max={220}
-              step={4}
-              value={settings.pill_bottom_inset}
-              onChange={(e) =>
-                onChange({ ...settings, pill_bottom_inset: Number(e.currentTarget.value) })
-              }
-              style={{ width: 180, accentColor: theme.accent }}
-            />
-          </div>
-
-          {settings.pill_pos && (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-              <div style={{ fontSize: 13, color: theme.textMuted }}>
-                The pill is pinned where you dragged it, so the settings above are paused.
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  void resetPillPosition();
-                  onChange({ ...settings, pill_pos: null });
-                }}
-                style={{
-                  cursor: "pointer",
-                  border: `1px solid ${theme.borderStrong}`,
-                  background: "transparent",
-                  color: theme.textBody,
-                  borderRadius: 8,
-                  fontSize: 12.5,
-                  fontWeight: 600,
-                  padding: "6px 12px",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                Reset position
-              </button>
-            </div>
-          )}
-        </div>
-      </Card>
-
-      <Card>
-        <SectionTitle sub="Grant these to WhimprFlow — dots update automatically within a few seconds.">
-          Permissions
-        </SectionTitle>
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <PermRow
-            ok={status.accessibility}
-            label="Accessibility"
-            detail={
-              status.accessibility
-                ? "granted — Fn works everywhere + types your words"
-                : "the key one: makes Fn work in EVERY app AND types your words"
-            }
-            onClick={() => {
-              requestAccessibility();
-              setTimeout(refresh, 800);
-            }}
-          />
-          <PermRow
-            ok={status.microphone}
-            label="Microphone"
-            // Same honesty as the setup screen: when macOS is judging this as
-            // some other app, say so instead of pointing at a switch that
-            // cannot move this dot.
-            detail={
-              status.microphone
-                ? "granted"
-                : (status.microphone_hint ?? "hears what you say")
-            }
-            onClick={() => {
-              requestMicrophone();
-              setTimeout(refresh, 1000);
-            }}
-          />
-          <PermRow
-            ok={status.input_monitoring}
-            label="Input Monitoring"
-            detail="optional — extra reliability for key detection"
-            onClick={() => {
-              requestInputMonitoring();
-              setTimeout(refresh, 1000);
-            }}
-          />
-        </div>
-      </Card>
-    </div>
+      </div>
+    </>
   );
 }

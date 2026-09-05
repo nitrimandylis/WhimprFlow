@@ -6,6 +6,8 @@ export type CleanupMode = "raw" | "local" | "open_ai" | "anthropic";
 export type CleanupLevel = "none" | "light" | "medium" | "high";
 export type AsrMode = "local" | "cloud";
 
+export type Appearance = "system" | "light" | "dark";
+
 export interface Settings {
   cleanup_mode: CleanupMode;
   cleanup_level: CleanupLevel;
@@ -46,6 +48,9 @@ export interface Settings {
   // Keep the text of each dictation for the Hub history list (last 500).
   // Off keeps only word counts and timing for the stats.
   save_history: boolean;
+  // Hub window appearance. Applied by Rust to the window, so vibrancy and
+  // prefers-color-scheme change together.
+  appearance: Appearance;
 }
 
 export type PushToTalkKey = "fn" | "right_command" | "right_option" | "right_control";
@@ -174,6 +179,7 @@ export const DEFAULT_SETTINGS: Settings = {
   microphone: "",
   style_instructions: "",
   save_history: true,
+  appearance: "system",
 };
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {

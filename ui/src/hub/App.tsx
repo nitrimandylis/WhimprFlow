@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { font, palette } from "../tokens/values";
-import { theme } from "./theme";
 import { Onboarding } from "./Onboarding";
 import { Sidebar, type Page } from "./Sidebar";
-import { Home } from "./Home";
+import { History } from "./History";
 import { Insights } from "./Insights";
 import { DictionaryPane } from "./DictionaryPane";
 import { SettingsPane } from "./SettingsPane";
 import { StylePane } from "./StylePane";
 import { Help } from "./Help";
-import { Walkthrough, shouldShowWalkthrough } from "./Walkthrough";
+import { Button } from "./ui";
 import { gsap, prefersReduced, EASE } from "./anim";
 import {
   getSettings,
@@ -19,6 +17,7 @@ import {
   onPermissions,
   requestAccessibility,
   fixAccessibility,
+  listenEvent,
   type Settings,
   type Status,
   type LastError,
@@ -26,14 +25,9 @@ import {
   UNKNOWN_STATUS,
 } from "./api";
 
-// A slim, dismissible warning strip shown above the Hub content whenever
-// something is stopping dictation from reaching the cursor — either a
-// permission that lapsed after the onboarding gate was already passed (e.g.
-// a rebuild invalidated a stale macOS Accessibility grant), or the last loud
-// diagnostic reported by the dictation pipeline (`diag::report` in
-// src-tauri). Without this, a permission revoked (or a hotkey tap that died)
-// mid-session was previously invisible outside the terminal — see the
-// "text is not writing where the cursor is" bug reports.
+// A slim, dismissible strip above the content whenever something is stopping
+// dictation from reaching the cursor: a permission that lapsed after setup, or
+// the last loud diagnostic from the pipeline (`diag::report` in src-tauri).
 function ErrorBanner({
   headline,
   detail,
@@ -48,136 +42,73 @@ function ErrorBanner({
   onDismiss: () => void;
 }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 14,
-        padding: "10px 20px",
-        background: "rgba(255,107,107,0.12)",
-        borderBottom: `1px solid rgba(255,107,107,0.35)`,
-        fontFamily: font.ui,
-      }}
-    >
-      <span style={{ fontSize: 15, flex: "0 0 auto" }}>⚠</span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: palette.slate900 }}>{headline}</span>
-        <span style={{ fontSize: 13, color: theme.textMuted, marginLeft: 8 }}>{detail}</span>
+    <div className="banner">
+      <div className="banner-text">
+        <b>{headline}</b>
+        <span>{detail}</span>
       </div>
-      {actionLabel && onAction && (
-        <button
-          onClick={onAction}
-          style={{
-            flex: "0 0 auto",
-            cursor: "pointer",
-            border: "none",
-            borderRadius: 8,
-            padding: "6px 12px",
-            fontSize: 12.5,
-            fontWeight: 600,
-            fontFamily: font.ui,
-            color: "#fff",
-            background: palette.error,
-          }}
-        >
-          {actionLabel}
-        </button>
-      )}
-      <button
-        onClick={onDismiss}
-        aria-label="Dismiss"
-        style={{
-          flex: "0 0 auto",
-          cursor: "pointer",
-          border: "none",
-          background: "transparent",
-          color: theme.textFaint,
-          fontSize: 14,
-          padding: 4,
-        }}
-      >
-        ✕
-      </button>
+      {actionLabel && onAction && <Button variant="danger" onClick={onAction}>{actionLabel}</Button>}
+      <Button variant="plain" onClick={onDismiss} title="Dismiss">✕</Button>
     </div>
   );
 }
 
-// Wraps the routed pane. Remounted per navigation (key={page}), so each page
-// arrival plays a GSAP enter-cascade: the pane's own sections stagger up. Home
-// runs its own richer timeline, so it opts out here.
+// Remounted per navigation (key={page}). The pane's groups rise in with a
+// short stagger, the one piece of motion the Hub keeps.
 function RoutedPage({ page, children }: { page: Page; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement | null>(null);
   useLayoutEffect(() => {
-    if (page === "home" || prefersReduced() || document.hidden || !ref.current) return;
+    if (prefersReduced() || document.hidden || !ref.current) return;
+    const targets = ref.current.querySelectorAll(".group, .group-title, .history section, .empty");
+    if (targets.length === 0) return;
     const ctx = gsap.context(() => {
-      const root = ref.current?.firstElementChild;
-      const targets = root && root.children.length > 1 ? root.children : ref.current?.children;
-      gsap.from(targets as Element[] | HTMLCollection, {
-        opacity: 0,
-        y: 22,
-        duration: 0.6,
-        ease: EASE,
-        stagger: 0.07,
-        clearProps: "transform,opacity",
-      });
+      gsap.from(targets, { opacity: 0, y: 6, duration: 0.25, ease: EASE, stagger: 0.03, clearProps: "transform,opacity" });
     }, ref);
     return () => ctx.revert();
   }, [page]);
-  return <div ref={ref}>{children}</div>;
+  return (
+    <div ref={ref} className="pane">
+      {children}
+    </div>
+  );
 }
-export function App() {
-  const [page, setPage] = useState<Page>("home");
 
-  // The pill's gear button asks Rust to show the Hub on Settings.
-  useEffect(() => {
-    let un: (() => void) | undefined;
-    void (async () => {
-      try {
-        const { listen } = await import("@tauri-apps/api/event");
-        un = await listen<Page>("whimpr://navigate", (e) => setPage(e.payload));
-      } catch { /* browser preview */ }
-    })();
-    return () => un?.();
-  }, []);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+export function App() {
+  const [page, setPage] = useState<Page>("history");
+  const [settings, setLocalSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [entered, setEntered] = useState(() => {
     try {
-      return localStorage.getItem("whimpr:sidebar-collapsed") === "true";
+      return localStorage.getItem("whimpr_onboarding_done") === "1";
     } catch {
       return false;
     }
-  });
-  const [showWalkthrough, setShowWalkthrough] = useState(shouldShowWalkthrough);
-  const [settings, setLocalSettings] = useState<Settings>(DEFAULT_SETTINGS);
-  const [entered, setEntered] = useState(() => {
-    try { return localStorage.getItem("whimpr_onboarding_done") === "1"; } catch { return false; }
   });
   const [status, setStatus] = useState<Status>(UNKNOWN_STATUS);
   const [lastError, setLastError] = useState<LastError | null>(null);
   const [errorDismissed, setErrorDismissed] = useState(false);
 
   const markEntered = () => {
-    try { localStorage.setItem("whimpr_onboarding_done", "1"); } catch { /* ignore */ }
+    try {
+      localStorage.setItem("whimpr_onboarding_done", "1");
+    } catch {
+      /* ignore */
+    }
     setEntered(true);
   };
 
-  const setCollapsed = (collapsed: boolean) => {
-    setSidebarCollapsed(collapsed);
-    try {
-      localStorage.setItem("whimpr:sidebar-collapsed", String(collapsed));
-    } catch {
-      // The state remains usable when browser storage is unavailable.
-    }
-  };
+  // The pill's gear button asks Rust to show the Hub on Settings.
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    void listenEvent<Page>("whimpr://navigate", setPage).then((u) => (un = u));
+    return () => un?.();
+  }, []);
 
-  // Stable across renders. It used to be rebuilt on every render, which tore
-  // down and restarted any interval keyed on it — a poll that resets its own
-  // clock on every tick is a poll that can be starved.
+  // Stable across renders so the poll below is not restarted every render.
   const refresh = useCallback(
     () =>
       getStatus().then((s) => {
         setStatus(s);
-        // Auto-enter if both required permissions are already granted so the user
-        // never sees the Onboarding gate on a re-open after a successful setup.
+        // Skip the gate on re-open once both required permissions are in.
         if (s.accessibility && s.microphone) markEntered();
       }),
     [],
@@ -185,9 +116,8 @@ export function App() {
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
 
-  // Grace-tracked "wired" check: Accessibility can read as granted while the
-  // Fn tap is still dead (stale TCC entry from an earlier build). Only flag it
-  // after the tap thread has had a fair chance to spin up.
+  // Accessibility can read as granted while the key tap is still dead (stale
+  // TCC entry from an earlier build). Only flag it after a grace period.
   const [accSince, setAccSince] = useState<number | null>(null);
   useEffect(() => {
     setAccSince((prev) => (status.accessibility ? (prev ?? Date.now()) : null));
@@ -199,14 +129,9 @@ export function App() {
     getLastError().then(setLastError);
   }, []);
 
-  // The permission heartbeat lives in Rust now (`permissions::watch`) and is
-  // pushed here the instant macOS changes its mind. That matters because the
-  // reader grants the microphone from *System Settings*, with this window
-  // behind it or closed to the tray — and a webview that isn't rendering runs
-  // no timers at all. (Measured on 0.1.1: hide the Hub and its status calls
-  // stop 4.4s later and never resume, while a Rust thread keeps ticking every
-  // half second.) Waiting on our own setInterval was half of why "it didn't
-  // recognize that I had given it microphone permissions" happened.
+  // Permission heartbeat pushed from Rust (`permissions::watch`). A webview
+  // that is not rendering runs no timers, and the reader grants from System
+  // Settings with this window behind it, so Rust has to be the one ticking.
   useEffect(() => {
     let stop: (() => void) | undefined;
     let gone = false;
@@ -223,8 +148,7 @@ export function App() {
     };
   }, []);
 
-  // Coming back to the window is the other moment the reader expects the truth:
-  // they just flipped a switch in System Settings and tabbed back here.
+  // Coming back to the window: they just flipped a switch and tabbed back.
   useEffect(() => {
     const sync = () => void refreshRef.current();
     window.addEventListener("focus", sync);
@@ -235,37 +159,24 @@ export function App() {
     };
   }, []);
 
-  // Backstop poll for the whole session, not just during onboarding — a
-  // permission can lapse after `entered` is already true (a rebuild with a new
-  // ad-hoc signature invalidates a prior macOS Accessibility grant; see the
-  // "stale TCC entry" case in hotkey.rs), and that used to go completely
-  // unnoticed until the user dug through logs.
+  // Backstop poll for the whole session: a permission can lapse after entry.
   useEffect(() => {
     const id = setInterval(() => void refreshRef.current(), 5000);
     return () => clearInterval(id);
   }, []);
 
-  // Live-update the moment the dictation pipeline reports a failure
-  // (`diag::report` in src-tauri), instead of waiting for the next poll.
+  // Live pipeline failures, instead of waiting for the next poll.
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    import("@tauri-apps/api/event")
-      .then(({ listen }) =>
-        listen<LastError>("whimpr://error", (e) => {
-          setLastError(e.payload);
-          setErrorDismissed(false);
-        }),
-      )
-      .then((u) => (unlisten = u))
-      .catch(() => {});
-    return () => unlisten?.();
+    let un: (() => void) | undefined;
+    void listenEvent<LastError>("whimpr://error", (e) => {
+      setLastError(e);
+      setErrorDismissed(false);
+    }).then((u) => (un = u));
+    return () => un?.();
   }, []);
 
-  // Each keystroke in a settings text field calls update(); saving on every one
-  // fired overlapping, unawaited Tauri calls (each doing a keyring lookup + HTTP
-  // client rebuild) with no ordering guarantee, so a fast typist could have an
-  // earlier, shorter value win the disk write over the final one. Debounce the
-  // actual save so only the settled value after typing stops gets persisted.
+  // Debounced save: text fields call update() per keystroke, and overlapping
+  // unawaited saves had no ordering guarantee.
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const update = (s: Settings) => {
     setLocalSettings(s);
@@ -273,39 +184,27 @@ export function App() {
     saveTimer.current = setTimeout(() => void setSettings(s), 400);
   };
 
-  // Gate the app behind the setup wizard until the required permissions are granted.
   if (!(status.accessibility && status.microphone) && !entered) {
     return <Onboarding status={status} refresh={refresh} onEnter={markEntered} />;
   }
 
-  // Two independent reasons for the post-onboarding banner: Accessibility
-  // lapsed after entry (checked live against `status`, not just the one-time
-  // onboarding gate), or the pipeline reported some other failure (hotkey tap
-  // dead, paste failed, empty transcript, …). A third case sits between them:
-  // Accessibility reads as granted but the tap never wired up (stale TCC
-  // entry), which needs the one-click Fix, not a re-grant.
   const accessibilityLapsed = entered && !status.accessibility;
   const staleWired =
-    entered &&
-    status.accessibility &&
-    !status.hotkey_wired &&
-    accSince !== null &&
-    Date.now() - accSince > 10000;
+    entered && status.accessibility && !status.hotkey_wired && accSince !== null && Date.now() - accSince > 10000;
   const banner = errorDismissed
     ? null
     : accessibilityLapsed
       ? {
           headline: "Accessibility permission needed",
-          detail: "WhimprFlow can no longer type into other apps — grant it again to keep dictating.",
-          actionLabel: "Grant Accessibility",
+          detail: "WhimprFlow can no longer type into other apps.",
+          actionLabel: "Grant",
           onAction: () => requestAccessibility(),
         }
       : staleWired
         ? {
-            headline: "Fn key isn't wired up",
-            detail:
-              "macOS still holds a permission entry for an older build of WhimprFlow. Click Fix to clear it, then enable WhimprFlow again in the pane that opens.",
-            actionLabel: "Fix Accessibility",
+            headline: "Dictation key is not wired up",
+            detail: "macOS still holds a permission entry for an older build. Fix clears it and reopens the pane.",
+            actionLabel: "Fix",
             onAction: () => void fixAccessibility(),
           }
         : lastError
@@ -313,43 +212,25 @@ export function App() {
           : null;
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100vh",
-        fontFamily: font.ui,
-        color: theme.textBody,
-        background: theme.pageBg,
-      }}
-    >
-      {banner && (
-        <ErrorBanner
-          headline={banner.headline}
-          detail={banner.detail}
-          actionLabel={banner.actionLabel}
-          onAction={banner.onAction}
-          onDismiss={() => setErrorDismissed(true)}
-        />
-      )}
-      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-        <Sidebar page={page} setPage={setPage} collapsed={sidebarCollapsed} onCollapsedChange={setCollapsed} />
-        <main style={{ flex: 1, minWidth: 0, overflowY: "auto" }}>
-          <div style={{ padding: "36px 44px", margin: "0 auto", maxWidth: 1120 }}>
-            <RoutedPage key={page} page={page}>
-              {page === "home" && <Home />}
-              {page === "insights" && <Insights />}
-              {page === "dictionary" && <DictionaryPane />}
-              {page === "style" && <StylePane settings={settings} onChange={update} />}
-              {page === "settings" && (
-                <SettingsPane settings={settings} onChange={update} status={status} refresh={refresh} />
-              )}
-              {page === "help" && <Help />}
-            </RoutedPage>
-          </div>
-        </main>
-      </div>
-      {showWalkthrough && <Walkthrough setPage={setPage} onComplete={() => setShowWalkthrough(false)} />}
+    <div className="shell">
+      <Sidebar page={page} setPage={setPage} />
+      <RoutedPage key={page} page={page}>
+        {banner && (
+          <ErrorBanner
+            headline={banner.headline}
+            detail={banner.detail}
+            actionLabel={banner.actionLabel}
+            onAction={banner.onAction}
+            onDismiss={() => setErrorDismissed(true)}
+          />
+        )}
+        {page === "history" && <History settings={settings} />}
+        {page === "insights" && <Insights />}
+        {page === "dictionary" && <DictionaryPane />}
+        {page === "style" && <StylePane settings={settings} onChange={update} />}
+        {page === "settings" && <SettingsPane settings={settings} onChange={update} status={status} refresh={() => void refresh()} />}
+        {page === "help" && <Help />}
+      </RoutedPage>
     </div>
   );
 }

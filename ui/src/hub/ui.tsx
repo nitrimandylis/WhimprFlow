@@ -1,181 +1,128 @@
 import { useEffect, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
-import { font, palette } from "../tokens/values";
-import { theme } from "./theme";
+import type { ReactNode } from "react";
 import { getStats, type StatsSummary, EMPTY_STATS } from "./api";
 
-// ── Card ─────────────────────────────────────────────────────────────────────
-export function Card({
+// Small primitives shared by every pane. Styling lives in hub.css.
+
+export function PageHeader({ title, children }: { title: string; children?: ReactNode }) {
+  return (
+    <header className="pane-header">
+      <h1>{title}</h1>
+      {children}
+    </header>
+  );
+}
+
+export function GroupTitle({ children }: { children: ReactNode }) {
+  return <div className="group-title">{children}</div>;
+}
+
+export function Group({ children }: { children: ReactNode }) {
+  return <div className="group">{children}</div>;
+}
+
+export function Note({ children }: { children: ReactNode }) {
+  return <div className="group-note">{children}</div>;
+}
+
+/// A settings row: label and optional hint on the left, control on the right.
+export function Row({
+  label,
+  hint,
   children,
-  style,
-  pad = 22,
+  className,
 }: {
-  children: ReactNode;
-  style?: CSSProperties;
-  pad?: number;
+  label: ReactNode;
+  hint?: ReactNode;
+  children?: ReactNode;
+  className?: string;
 }) {
   return (
-    <div
-      style={{
-        background: theme.cardBg,
-        border: `1px solid ${theme.border}`,
-        borderRadius: 16,
-        padding: pad,
-        boxShadow: theme.shadow,
-        ...style,
-      }}
-    >
-      {children}
+    <div className={`row${className ? ` ${className}` : ""}`}>
+      <div className="row-text">
+        <div className="row-label">{label}</div>
+        {hint && <div className="row-hint">{hint}</div>}
+      </div>
+      {children && <div className="row-control">{children}</div>}
     </div>
   );
 }
 
-// ── Status dot ───────────────────────────────────────────────────────────────
-export function Dot({ ok, size = 9 }: { ok: boolean; size?: number }) {
+/// Native macOS toggle (WebKit renders <input type=checkbox switch> as one).
+export function Switch({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+  const native = { switch: "" } as Record<string, string>;
   return (
-    <span
-      style={{
-        display: "inline-block",
-        width: size,
-        height: size,
-        borderRadius: 9999,
-        background: ok ? palette.success : palette.error,
-        boxShadow: ok ? `0 0 0 3px ${theme.accentSoft}` : "none",
-        marginRight: 8,
-        flex: "0 0 auto",
-      }}
+    <input
+      type="checkbox"
+      {...native}
+      aria-label={label}
+      checked={checked}
+      onChange={(e) => onChange(e.currentTarget.checked)}
     />
   );
 }
 
-// ── Button ───────────────────────────────────────────────────────────────────
+export function Select<T extends string>({
+  value,
+  options,
+  onChange,
+  label,
+}: {
+  value: T;
+  options: readonly { value: T; label: string }[];
+  onChange: (v: T) => void;
+  label: string;
+}) {
+  return (
+    <select aria-label={label} value={value} onChange={(e) => onChange(e.currentTarget.value as T)}>
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>{o.label}</option>
+      ))}
+    </select>
+  );
+}
+
 export function Button({
   children,
   onClick,
-  variant = "dark",
-  size = "md",
+  variant = "default",
+  size,
   disabled = false,
-  type = "button",
+  title,
 }: {
   children: ReactNode;
   onClick?: () => void;
-  variant?: "dark" | "accent" | "ghost";
-  size?: "sm" | "md";
+  variant?: "default" | "primary" | "danger" | "plain";
+  size?: "lg";
   disabled?: boolean;
-  type?: "button" | "submit";
+  title?: string;
 }) {
-  const pad = size === "sm" ? "6px 12px" : "9px 16px";
-  const fontSize = size === "sm" ? 12.5 : 13.5;
-  const palettes: Record<string, CSSProperties> = {
-    dark: { background: disabled ? theme.textFaint : theme.solidBg, color: theme.solidText, border: "none" },
-    accent: { background: disabled ? theme.textFaint : theme.accentDeep, color: "#fff", border: "none" },
-    ghost: {
-      background: "transparent",
-      color: theme.textBody,
-      border: `1px solid ${theme.borderStrong}`,
-    },
-  };
+  const cls = ["btn", variant !== "default" && `btn-${variant}`, size && `btn-${size}`].filter(Boolean).join(" ");
   return (
-    <button
-      type={type}
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        cursor: disabled ? "default" : "pointer",
-        borderRadius: 10,
-        padding: pad,
-        fontSize,
-        fontWeight: 600,
-        fontFamily: font.ui,
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 7,
-        whiteSpace: "nowrap",
-        transition: "opacity 120ms ease",
-        ...palettes[variant],
-      }}
-    >
+    <button type="button" className={cls} onClick={onClick} disabled={disabled} title={title}>
       {children}
     </button>
   );
 }
 
-// ── Segmented control ────────────────────────────────────────────────────────
-export function Segmented<T extends string>({
-  options,
-  value,
-  onChange,
-  full = false,
-}: {
-  options: { value: T; label: string }[];
-  value: T;
-  onChange: (v: T) => void;
-  full?: boolean;
-}) {
+export function Kbd({ children }: { children: ReactNode }) {
+  return <kbd className="kbd">{children}</kbd>;
+}
+
+export function Status({ ok, children }: { ok: boolean; children: ReactNode }) {
+  return <span className={`status ${ok ? "status-ok" : "status-bad"}`}>{children}</span>;
+}
+
+export function Empty({ title, body }: { title: string; body: ReactNode }) {
   return (
-    <div
-      style={{
-        display: full ? "grid" : "inline-flex",
-        gridTemplateColumns: full ? `repeat(${options.length}, 1fr)` : undefined,
-        background: theme.track,
-        borderRadius: 11,
-        padding: 3,
-        gap: 3,
-      }}
-    >
-      {options.map((o) => {
-        const active = value === o.value;
-        return (
-          <button
-            key={o.value}
-            onClick={() => onChange(o.value)}
-            style={{
-              border: "none",
-              cursor: "pointer",
-              borderRadius: 8,
-              padding: "7px 14px",
-              fontSize: 13,
-              fontFamily: font.ui,
-              textAlign: "center",
-              color: active ? theme.accentDeep : theme.textMuted,
-              background: active ? "#fff" : "transparent",
-              fontWeight: active ? 600 : 500,
-              boxShadow: active ? "0 1px 2px rgba(17,20,25,0.12)" : "none",
-              transition: "color 120ms ease",
-            }}
-          >
-            {o.label}
-          </button>
-        );
-      })}
+    <div className="empty">
+      <b>{title}</b>
+      {body}
     </div>
   );
 }
 
-// ── Page heading ─────────────────────────────────────────────────────────────
-export function PageTitle({ children, sub }: { children: ReactNode; sub?: ReactNode }) {
-  return (
-    <div style={{ marginBottom: 22 }}>
-      <h1
-        style={{
-          fontFamily: font.serif,
-          fontSize: 30,
-          fontWeight: 600,
-          letterSpacing: -0.4,
-          margin: 0,
-          color: theme.textStrong,
-        }}
-      >
-        {children}
-      </h1>
-      {sub && (
-        <p style={{ color: theme.textMuted, fontSize: 14, lineHeight: 1.5, margin: "8px 0 0" }}>{sub}</p>
-      )}
-    </div>
-  );
-}
-
-// ── Live stats hook (polls every ~4s so numbers climb while dictating) ───────
+/// Live stats, polled so the numbers move while you dictate.
 export function useStats(): StatsSummary {
   const [stats, setStats] = useState<StatsSummary>(EMPTY_STATS);
   useEffect(() => {

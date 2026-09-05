@@ -5349,6 +5349,7 @@ dependencies = [
  "whimpr-audio",
  "whimpr-cleanup",
  "whimpr-core",
+ "window-vibrancy",
  "windows 0.58.0",
 ]
 

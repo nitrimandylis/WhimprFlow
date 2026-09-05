@@ -554,12 +554,41 @@ fn build_overlay(app: &tauri::App) -> tauri::Result<WebviewWindow> {
 }
 
 fn build_hub(app: &tauri::App) -> tauri::Result<WebviewWindow> {
-    WebviewWindowBuilder::new(app, HUB_LABEL, WebviewUrl::App("index.html".into()))
+    let builder = WebviewWindowBuilder::new(app, HUB_LABEL, WebviewUrl::App("index.html".into()))
         .title("WhimprFlow")
         .inner_size(920.0, 640.0)
         .min_inner_size(720.0, 480.0)
-        .visible(true)
-        .build()
+        .visible(true);
+    // Native sidebar look: traffic lights inset into a translucent sidebar. The
+    // window is transparent so the vibrancy shows through; the content pane
+    // paints its own opaque background in CSS.
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .transparent(true);
+    let hub = builder.build()?;
+    #[cfg(target_os = "macos")]
+    {
+        use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
+        if let Err(e) = apply_vibrancy(&hub, NSVisualEffectMaterial::Sidebar, None, None) {
+            eprintln!("[whimpr] sidebar vibrancy unavailable: {e}");
+        }
+    }
+    apply_appearance(&hub, hotkey::current_settings().appearance);
+    Ok(hub)
+}
+
+/// Pin the Hub window's appearance, or hand it back to the system. Vibrancy
+/// and `prefers-color-scheme` both follow the window, so one call covers both.
+fn apply_appearance(hub: &WebviewWindow, appearance: whimpr_core::settings::Appearance) {
+    use whimpr_core::settings::Appearance;
+    let theme = match appearance {
+        Appearance::System => None,
+        Appearance::Light => Some(tauri::Theme::Light),
+        Appearance::Dark => Some(tauri::Theme::Dark),
+    };
+    let _ = hub.set_theme(theme);
 }
 
 /// Bar states where the pill window must exist. Idle (the rest state) hides it —
@@ -608,6 +637,9 @@ fn set_settings(app: tauri::AppHandle, settings: whimpr_core::Settings) {
     {
         apply_launch_at_login(settings.launch_at_login);
         apply_dock_visibility(&app, settings.show_in_dock);
+    }
+    if let Some(hub) = app.get_webview_window(HUB_LABEL) {
+        apply_appearance(&hub, settings.appearance);
     }
     hotkey::update_settings(settings);
     // The hands-free hotkey may have changed — re-register it from the new

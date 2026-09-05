@@ -1,169 +1,47 @@
 import { useEffect, useState } from "react";
-import { font } from "../tokens/values";
-import { theme } from "./theme";
-import { Button, Card } from "./ui";
+import { Button, Empty, Group, GroupTitle, PageHeader, Row } from "./ui";
 import { Icon } from "./icons";
-import {
-  addDictionaryEntry,
-  getDictionary,
-  removeDictionaryEntry,
-  type DictEntry,
-} from "./api";
+import { addDictionaryEntry, getDictionary, removeDictionaryEntry, type DictEntry } from "./api";
 
 type Tab = "all" | "manual" | "auto";
-
 const TABS: { key: Tab; label: string }[] = [
   { key: "all", label: "All" },
-  { key: "manual", label: "Manual" },
-  { key: "auto", label: "Auto-learned" },
+  { key: "manual", label: "Added by you" },
+  { key: "auto", label: "Learned" },
 ];
-
-function Tabs({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
-  return (
-    <div style={{ display: "flex", gap: 22, borderBottom: `1px solid ${theme.border}`, marginBottom: 18 }}>
-      {TABS.map((it) => {
-        const active = tab === it.key;
-        return (
-          <button
-            key={it.key}
-            onClick={() => onChange(it.key)}
-            style={{
-              border: "none",
-              background: "transparent",
-              cursor: "pointer",
-              fontFamily: font.ui,
-              fontSize: 13.5,
-              fontWeight: active ? 600 : 500,
-              color: active ? theme.textStrong : theme.textMuted,
-              padding: "0 0 11px",
-              marginBottom: -1,
-              borderBottom: `2px solid ${active ? theme.accent : "transparent"}`,
-            }}
-          >
-            {it.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 function AddForm({ onDone }: { onDone: () => void }) {
   const [correct, setCorrect] = useState("");
   const [heard, setHeard] = useState("");
-  const inputStyle = {
-    width: "100%",
-    background: theme.cardBgSubtle,
-    border: `1px solid ${theme.border}`,
-    borderRadius: 10,
-    padding: "9px 12px",
-    color: theme.textBody,
-    fontFamily: font.ui,
-    fontSize: 13.5,
-    outline: "none",
-  } as const;
 
   const submit = async () => {
     const word = correct.trim();
     if (!word) return;
-    const mishears = heard
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const mishears = heard.split(",").map((s) => s.trim()).filter(Boolean);
     await addDictionaryEntry(word, mishears);
     onDone();
   };
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") void submit();
+    if (e.key === "Escape") onDone();
+  };
 
   return (
-    <Card style={{ marginBottom: 16, borderColor: theme.accentSoftBorder }}>
-      <div style={{ fontSize: 14, fontWeight: 600, color: theme.textStrong, marginBottom: 12 }}>Add a word</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <div>
-          <label style={{ fontSize: 12, color: theme.textMuted, display: "block", marginBottom: 5 }}>Word</label>
-          <input
-            autoFocus
-            value={correct}
-            onChange={(e) => setCorrect(e.target.value)}
-            placeholder="e.g. WhimprFlow"
-            style={inputStyle}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void submit();
-            }}
-          />
-        </div>
-        <div>
-          <label style={{ fontSize: 12, color: theme.textMuted, display: "block", marginBottom: 5 }}>
-            Also heard as <span style={{ color: theme.textFaint }}>(optional, comma-separated)</span>
-          </label>
-          <input
-            value={heard}
-            onChange={(e) => setHeard(e.target.value)}
-            placeholder="whisper flow, wimper flow"
-            style={inputStyle}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void submit();
-            }}
-          />
-        </div>
-      </div>
-      <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-        <Button variant="accent" onClick={() => void submit()}>
-          Add word
-        </Button>
-        <Button variant="ghost" onClick={onDone}>
-          Cancel
-        </Button>
-      </div>
-    </Card>
-  );
-}
-
-function EntryRow({ entry, onRemove }: { entry: DictEntry; onRemove: () => void }) {
-  const [hover, setHover] = useState(false);
-  return (
-    <div
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
-        padding: "12px 6px",
-        borderBottom: `1px solid ${theme.border}`,
-      }}
-    >
-      <div style={{ minWidth: 0 }}>
-        <span style={{ fontSize: 14, fontWeight: 600, color: theme.textStrong }}>{entry.correct}</span>
-        {entry.auto && (
-          <span title="Auto-learned" style={{ marginLeft: 6, fontSize: 13 }}>
-            ✨
-          </span>
-        )}
-        {entry.mishears.length > 0 && (
-          <span style={{ marginLeft: 10, fontSize: 12.5, color: theme.textMuted }}>
-            → heard as {entry.mishears.join(", ")}
-          </span>
-        )}
-      </div>
-      <button
-        onClick={onRemove}
-        title="Remove"
-        style={{
-          border: "none",
-          background: "transparent",
-          cursor: "pointer",
-          color: theme.textFaint,
-          opacity: hover ? 1 : 0,
-          transition: "opacity 120ms ease",
-          display: "flex",
-          alignItems: "center",
-          padding: 4,
-        }}
-      >
-        <Icon name="close" size={16} />
-      </button>
-    </div>
+    <>
+      <GroupTitle>New word</GroupTitle>
+      <Group>
+        <Row label="Word" hint="Spelled the way you want it typed.">
+          <input autoFocus value={correct} onChange={(e) => setCorrect(e.target.value)} placeholder="WhimprFlow" onKeyDown={onKey} style={{ width: 220 }} />
+        </Row>
+        <Row label="Often heard as" hint="Optional. Separate variants with commas.">
+          <input value={heard} onChange={(e) => setHeard(e.target.value)} placeholder="whisper flow, wimper flow" onKeyDown={onKey} style={{ width: 220 }} />
+        </Row>
+        <Row label="">
+          <Button onClick={onDone}>Cancel</Button>
+          <Button variant="primary" onClick={() => void submit()} disabled={!correct.trim()}>Add word</Button>
+        </Row>
+      </Group>
+    </>
   );
 }
 
@@ -172,7 +50,6 @@ export function DictionaryPane() {
   const [tab, setTab] = useState<Tab>("all");
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
-  const [sortAsc, setSortAsc] = useState(true);
 
   const load = () => getDictionary().then(setEntries);
   useEffect(() => {
@@ -185,114 +62,75 @@ export function DictionaryPane() {
   };
 
   const q = query.trim().toLowerCase();
-  let filtered = entries
+  const filtered = entries
     .filter((e) => tab === "all" || (tab === "manual" ? !e.auto : e.auto))
-    .filter((e) => !q || e.correct.toLowerCase().includes(q));
-  filtered = [...filtered].sort((a, b) =>
-    sortAsc ? a.correct.localeCompare(b.correct) : b.correct.localeCompare(a.correct),
-  );
+    .filter((e) => !q || e.correct.toLowerCase().includes(q))
+    .sort((a, b) => a.correct.localeCompare(b.correct));
 
   return (
-    <div style={{ maxWidth: 760 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
-        <div>
-          <h1
-            style={{
-              fontFamily: font.serif,
-              fontSize: 30,
-              fontWeight: 600,
-              letterSpacing: -0.4,
-              margin: 0,
-              color: theme.textStrong,
-            }}
-          >
-            Dictionary
-          </h1>
-          <p style={{ color: theme.textMuted, fontSize: 14, margin: "8px 0 0" }}>
-            Teach WhimprFlow the words, names, and jargon it should always get right.
-          </p>
-        </div>
-        <Button variant="accent" onClick={() => setAdding((a) => !a)}>
-          <Icon name="plus" size={15} style={{ color: "#fff" }} />
-          Add new
+    <>
+      <PageHeader title="Dictionary">
+        <input type="search" aria-label="Search words" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <Button variant="primary" onClick={() => setAdding((a) => !a)}>
+          <Icon name="plus" size={13} strokeWidth={2.2} />
+          Add
         </Button>
-      </div>
+      </PageHeader>
+      <div className="pane-scroll">
+        <div className="form">
+          {adding && (
+            <AddForm
+              onDone={() => {
+                setAdding(false);
+                void load();
+              }}
+            />
+          )}
 
-      <Tabs tab={tab} onChange={setTab} />
+          <GroupTitle>
+            <div className="tabs" role="tablist" style={{ marginBottom: 4 }}>
+              {TABS.map((t) => (
+                <button key={t.key} role="tab" aria-selected={tab === t.key} onClick={() => setTab(t.key)}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </GroupTitle>
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, marginBottom: 14 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 7,
-            background: theme.cardBg,
-            border: `1px solid ${theme.border}`,
-            borderRadius: 9,
-            padding: "6px 10px",
-            minWidth: 200,
-          }}
-        >
-          <Icon name="search" size={15} style={{ color: theme.textFaint }} />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search words"
-            style={{
-              border: "none",
-              outline: "none",
-              background: "transparent",
-              fontFamily: font.ui,
-              fontSize: 13,
-              color: theme.textBody,
-              width: "100%",
-            }}
-          />
+          {filtered.length === 0 ? (
+            <Group>
+              <Empty
+                title={entries.length === 0 ? "No words yet" : "No matches"}
+                body={
+                  entries.length === 0
+                    ? "Add names and jargon it keeps getting wrong. WhimprFlow also learns words you correct right after a paste."
+                    : `Nothing here matches “${query}”.`
+                }
+              />
+            </Group>
+          ) : (
+            <Group>
+              {filtered.map((e) => (
+                <div className="row" key={e.correct}>
+                  <div className="row-text">
+                    <span className="dict-word">{e.correct}</span>
+                    {e.mishears.length > 0 && <span className="dict-heard">heard as {e.mishears.join(", ")}</span>}
+                    {e.auto && <span className="dict-auto">learned</span>}
+                  </div>
+                  <div className="row-control dict-remove">
+                    <Button variant="plain" title="Remove" onClick={() => void remove(e.correct)}>
+                      <Icon name="close" size={14} />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </Group>
+          )}
+          <div className="group-note">
+            Words here are corrected in every dictation before the text is typed.
+          </div>
         </div>
-        <button
-          title={sortAsc ? "Sort Z-A" : "Sort A-Z"}
-          onClick={() => setSortAsc((v) => !v)}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 34,
-            height: 34,
-            border: `1px solid ${theme.border}`,
-            borderRadius: 9,
-            background: theme.cardBg,
-            color: theme.textMuted,
-            cursor: "pointer",
-          }}
-        >
-          <Icon name="sort" size={16} />
-        </button>
       </div>
-
-      {adding && (
-        <AddForm
-          onDone={() => {
-            setAdding(false);
-            void load();
-          }}
-        />
-      )}
-
-      <Card pad={filtered.length ? 8 : 22}>
-        {filtered.length === 0 ? (
-          <div style={{ padding: "30px 8px", textAlign: "center", color: theme.textFaint, fontSize: 13.5 }}>
-            {entries.length === 0
-              ? "No words yet. Add one, or WhimprFlow will auto-learn the terms you correct."
-              : `No words match "${query}".`}
-          </div>
-        ) : (
-          <div style={{ padding: "4px 14px" }}>
-            {filtered.map((e) => (
-              <EntryRow key={e.correct} entry={e} onRemove={() => void remove(e.correct)} />
-            ))}
-          </div>
-        )}
-      </Card>
-    </div>
+    </>
   );
 }
