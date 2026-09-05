@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { palette, pillFill, geometry, font } from "../tokens/values";
+import { LANGUAGES, type Settings } from "../hub/api";
 
 // Visual states, mirroring the Rust `BarState`.
 export type BarState =
@@ -147,54 +148,180 @@ function StopButton() {
   );
 }
 
-// ── Hover action buttons ────────────────────────────────────────────────────
+// ── Hover quick controls ────────────────────────────────────────────────────
 // Shown below the pill on hover. Rust toggles ignoresMouseEvents so these
 // receive real clicks without the pill stealing focus at rest.
 
-const LANG_CYCLE = ["en", "hi", "gu", "auto"] as const;
-const LANG_NAMES: Record<string, string> = { en: "EN", hi: "हिं", gu: "ગુ", auto: "Auto" };
-function langLabel(code: string) { return LANG_NAMES[code] ?? code.toUpperCase(); }
+const PTT_LABEL: Record<string, string> = {
+  fn: "fn",
+  right_command: "right ⌘",
+  right_option: "right ⌥",
+  right_control: "right ⌃",
+};
+
+const CLEANUP_OPTIONS = [
+  { value: "raw", label: "Raw" },
+  { value: "local", label: "Local" },
+  { value: "open_ai", label: "OpenAI" },
+  { value: "anthropic", label: "Claude" },
+] as const;
+
+async function invokeSafe<T>(cmd: string, args?: Record<string, unknown>): Promise<T | undefined> {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await invoke<T>(cmd, args);
+  } catch {
+    return undefined; /* browser preview */
+  }
+}
+
+/// Hold the hover open while a native <select> popup is up: the cursor leaves
+/// the pill to pick an item, and without this Rust would collapse the cluster.
+function lockHandlers() {
+  return {
+    onFocus: () => void invokeSafe("set_pill_hover_lock", { locked: true }),
+    onBlur: () => void invokeSafe("set_pill_hover_lock", { locked: false }),
+  };
+}
+
+const chipStyle: React.CSSProperties = {
+  position: "relative",
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  height: 30,
+  padding: "0 11px",
+  borderRadius: 9999,
+  background: pillFill.base,
+  border: "1px solid rgba(255,255,255,0.10)",
+  boxShadow: pillFill.shadow,
+  color: palette.pillText,
+  fontSize: 12.5,
+  fontWeight: 500,
+  whiteSpace: "nowrap",
+  cursor: "pointer",
+  flex: "0 0 auto",
+};
+
+// A styled chip with an invisible native <select> on top. The popup is the
+// real macOS menu (can extend past the overlay window), the chip controls
+// the closed width so long microphone names don't blow out the row.
+function Chip({
+  icon,
+  text,
+  title,
+  value,
+  options,
+  onChange,
+  maxWidth,
+}: {
+  icon: React.ReactNode;
+  text: string;
+  title: string;
+  value: string;
+  options: readonly { value: string; label: string }[];
+  onChange: (v: string) => void;
+  maxWidth?: number;
+}) {
+  return (
+    <label title={title} style={chipStyle}>
+      <span style={{ display: "flex", flex: "0 0 auto" }}>{icon}</span>
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", maxWidth }}>{text}</span>
+      <select
+        aria-label={title}
+        value={value}
+        {...lockHandlers()}
+        onChange={(e) => {
+          onChange(e.currentTarget.value);
+          e.currentTarget.blur();
+        }}
+        style={{ position: "absolute", inset: 0, width: "100%", opacity: 0, cursor: "pointer" }}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function MicIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+    </svg>
+  );
+}
 
 function GlobeIcon() {
   return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <circle cx="12" cy="12" r="9" />
       <path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18" />
     </svg>
   );
 }
 
-function RoundButton({
-  children,
-  onActivate,
-  title,
-  active = false,
-}: {
-  children: React.ReactNode;
-  onActivate: () => void;
-  title: string;
-  active?: boolean;
-}) {
+function SparkIcon() {
   return (
-    <div
-      title={title}
-      {...buttonHandlers(onActivate)}
-      style={{
-        width: 40,
-        height: 40,
-        borderRadius: 9999,
-        background: active ? palette.accent500 : pillFill.base,
-        border: `1px solid rgba(255,255,255,${active ? 0.25 : 0.1})`,
-        boxShadow: pillFill.shadow,
-        color: active ? "#08201E" : palette.pillText,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        cursor: "pointer",
-        flex: "0 0 auto",
-      }}
-    >
-      {children}
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round">
+      <path d="M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z" />
+    </svg>
+  );
+}
+
+function GearIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1" />
+    </svg>
+  );
+}
+
+function QuickControls({ settings, onChange }: { settings: Settings; onChange: (s: Settings) => void }) {
+  const [mics, setMics] = useState<string[]>([]);
+  useEffect(() => {
+    void invokeSafe<string[]>("list_microphones").then((m) => setMics(m ?? []));
+  }, []);
+  const micOptions = [{ value: "", label: "System default" }, ...mics.map((m) => ({ value: m, label: m }))];
+  const lang = LANGUAGES.find((l) => l.value === settings.language);
+  const cleanup = CLEANUP_OPTIONS.find((c) => c.value === settings.cleanup_mode);
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, pointerEvents: "auto" }}>
+      <Chip
+        icon={<MicIcon />}
+        text={settings.microphone || "Default"}
+        title="Microphone"
+        value={settings.microphone}
+        options={micOptions}
+        onChange={(v) => onChange({ ...settings, microphone: v })}
+        maxWidth={90}
+      />
+      <Chip
+        icon={<GlobeIcon />}
+        text={settings.language === "auto" ? "Auto" : settings.language.toUpperCase()}
+        title={`Language: ${lang?.label ?? settings.language}`}
+        value={settings.language}
+        options={LANGUAGES}
+        onChange={(v) => onChange({ ...settings, language: v })}
+      />
+      <Chip
+        icon={<SparkIcon />}
+        text={cleanup?.label ?? settings.cleanup_mode}
+        title="Cleanup"
+        value={settings.cleanup_mode}
+        options={CLEANUP_OPTIONS}
+        onChange={(v) => onChange({ ...settings, cleanup_mode: v as Settings["cleanup_mode"] })}
+      />
+      <div
+        title="Open settings"
+        {...buttonHandlers(() => void invokeSafe("open_hub_settings"))}
+        style={{ ...chipStyle, width: 30, padding: 0, justifyContent: "center" }}
+      >
+        <GearIcon />
+      </div>
     </div>
   );
 }
@@ -206,31 +333,35 @@ export function FlowBar() {
   // Driven by Rust cursor tracking (whimpr://hover). Rust also toggles
   // ignoresMouseEvents so buttons are clickable while hovering.
   const [hover, setHover] = useState(false);
-  const [language, setLanguage] = useState("en");
+  const [settings, setSettingsState] = useState<Settings | null>(null);
+  const clusterRef = useRef<HTMLDivElement | null>(null);
 
-  // Read settings the action buttons display, refreshed each hover.
+  // Read settings the quick controls display, refreshed each hover.
   useEffect(() => {
     if (!hover) return;
-    void (async () => {
-      try {
-        const { invoke } = await import("@tauri-apps/api/core");
-        const s = await invoke<{ language: string }>("get_settings");
-        setLanguage(s.language);
-      } catch { /* browser preview */ }
-    })();
+    void invokeSafe<Settings>("get_settings").then((s) => s && setSettingsState(s));
   }, [hover]);
 
-  async function cycleLanguage() {
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      const s = await invoke<Record<string, unknown>>("get_settings");
-      const cur = String(s.language ?? "en");
-      const i = LANG_CYCLE.indexOf(cur as (typeof LANG_CYCLE)[number]);
-      const next = LANG_CYCLE[(i + 1) % LANG_CYCLE.length];
-      await invoke("set_settings", { settings: { ...s, language: next } });
-      setLanguage(next);
-    } catch { /* browser preview */ }
+  function saveSettings(next: Settings) {
+    setSettingsState(next);
+    void invokeSafe("set_settings", { settings: next });
   }
+
+  // Report the cluster's box to Rust after every size change (the morph
+  // transition included) so the hover zone is exactly the pill, never the
+  // transparent window around it.
+  useEffect(() => {
+    const el = clusterRef.current;
+    if (!el) return;
+    const report = () => {
+      const r = el.getBoundingClientRect();
+      void invokeSafe("set_pill_hit_rect", { x: r.left, y: r.top, w: r.width, h: r.height });
+    };
+    const ro = new ResizeObserver(report);
+    ro.observe(el);
+    report();
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     let un1: (() => void) | undefined;
@@ -289,8 +420,10 @@ export function FlowBar() {
         pointerEvents: "none",
       }}
     >
+      <div ref={clusterRef} style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
       <div
         aria-label={`WhimprFlow ${state}${isError && errorText ? `: ${errorText.detail}` : ""}`}
+        {...(isIdle ? buttonHandlers(() => void pillCommand("pill_start")) : {})}
         title={isError ? errorText?.detail : ""}
         style={{
           display: "flex",
@@ -326,7 +459,7 @@ export function FlowBar() {
               }}
             >
               <span>Dictate</span>
-              <b style={{ fontWeight: 700 }}>fn</b>
+              <b style={{ fontWeight: 700 }}>{PTT_LABEL[settings?.push_to_talk_key ?? "fn"] ?? "fn"}</b>
             </div>
           ) : null
         ) : recording ? (
@@ -354,13 +487,8 @@ export function FlowBar() {
         )}
       </div>
 
-      {showActions && (
-        <div style={{ display: "flex", alignItems: "center", gap: 11, marginTop: 9, pointerEvents: "auto" }}>
-          <RoundButton title={`Language: ${langLabel(language)}`} onActivate={() => void cycleLanguage()}>
-            <GlobeIcon />
-          </RoundButton>
-        </div>
-      )}
+      {showActions && settings && <QuickControls settings={settings} onChange={saveSettings} />}
+      </div>
     </div>
   );
 }

@@ -127,6 +127,18 @@ function RoutedPage({ page, children }: { page: Page; children: React.ReactNode 
 }
 export function App() {
   const [page, setPage] = useState<Page>("home");
+
+  // The pill's gear button asks Rust to show the Hub on Settings.
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    void (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        un = await listen<Page>("whimpr://navigate", (e) => setPage(e.payload));
+      } catch { /* browser preview */ }
+    })();
+    return () => un?.();
+  }, []);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try {
       return localStorage.getItem("whimpr:sidebar-collapsed") === "true";

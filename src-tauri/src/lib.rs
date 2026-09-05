@@ -41,7 +41,7 @@ pub fn bar_gen() -> u64 {
 /// wrong by the ratio between them. Moving from a 1× screen to the 2× laptop
 /// computed the pill as 160×70 instead of 320×132 and parked it under the Dock.
 /// The window is not resizable, so its logical size never changes.
-const OVERLAY_W_PT: f64 = 320.0;
+const OVERLAY_W_PT: f64 = 360.0;
 const OVERLAY_H_PT: f64 = 132.0;
 const HUB_LABEL: &str = "main";
 
@@ -379,29 +379,66 @@ fn spawn_display_watcher(app: tauri::AppHandle) {
     });
 }
 
-/// Is the cursor inside the pill zone (bottom-center of the overlay)?
-///
-/// Uses a proportional slice of the window, not the full bounds, so the
-/// transparent area above the pill doesn't trigger hover. The zone covers
-/// the expanded pill + action buttons (~100 logical points from the bottom,
-/// ~192 wide centered).
+/// The pill cluster's bounding box in logical points relative to the overlay
+/// window's top-left, reported by FlowBar after every layout change. This is
+/// the only hover hit-test: the overlay window is much larger than the pill
+/// so its transparent area must never count as "over".
+static PILL_HIT_RECT: std::sync::Mutex<Option<(f64, f64, f64, f64)>> = std::sync::Mutex::new(None);
+/// While true the hover watcher never reports "left". FlowBar sets it while a
+/// native `<select>` popup is open, since the cursor is then off the pill.
+static PILL_HOVER_LOCK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Slack around the resting nub so a 16pt-tall target isn't fussy.
+const PILL_HIT_SLACK_PT: f64 = 4.0;
+
+#[tauri::command]
+fn set_pill_hit_rect(x: f64, y: f64, w: f64, h: f64) {
+    *PILL_HIT_RECT.lock().unwrap() = Some((x, y, w, h));
+}
+
+#[tauri::command]
+fn set_pill_hover_lock(locked: bool) {
+    PILL_HOVER_LOCK.store(locked, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Show the Hub on its Settings page (the pill's gear button).
+#[tauri::command]
+fn open_hub_settings(app: tauri::AppHandle) {
+    show_hub(&app);
+    let _ = app.emit_to(HUB_LABEL, "whimpr://navigate", "settings");
+}
+
+/// Is the cursor inside the pill cluster's reported rect (plus slack)?
 fn cursor_over_pill_zone(w: &WebviewWindow, app: &tauri::AppHandle) -> bool {
+    let Some((rx, ry, rw, rh)) = *PILL_HIT_RECT.lock().unwrap() else { return false };
     let Ok(cursor) = app.cursor_position() else { return false };
     let Ok(pos) = w.outer_position() else { return false };
-    let Ok(size) = w.outer_size() else { return false };
+    let scale = w.scale_factor().unwrap_or(1.0);
+    // Cursor and window position are physical pixels; the rect is logical.
+    let cx = cursor.x / scale;
+    let cy = cursor.y / scale;
+    let wx = pos.x as f64 / scale;
+    let wy = pos.y as f64 / scale;
+    point_in_rect(cx - wx, cy - wy, (rx, ry, rw, rh), PILL_HIT_SLACK_PT)
+}
 
-    let ww = size.width as f64;
-    let wh = size.height as f64;
-    let cx = pos.x as f64 + ww / 2.0;
-    let bottom = pos.y as f64 + wh;
-    // Bottom 75% covers pill + action buttons; middle 60% covers their width.
-    let zone_w = ww * 0.6;
-    let zone_h = wh * 0.75;
+/// `(px, py)` is the cursor in window-local logical points.
+fn point_in_rect(px: f64, py: f64, (rx, ry, rw, rh): (f64, f64, f64, f64), slack: f64) -> bool {
+    px >= rx - slack && px <= rx + rw + slack && py >= ry - slack && py <= ry + rh + slack
+}
 
-    cursor.x >= cx - zone_w / 2.0
-        && cursor.x <= cx + zone_w / 2.0
-        && cursor.y >= bottom - zone_h
-        && cursor.y <= bottom
+#[cfg(test)]
+mod pill_hit_tests {
+    use super::point_in_rect;
+
+    #[test]
+    fn nub_rect_only() {
+        // Resting nub: 76x16 at the bottom centre of a 360x132 window.
+        let nub = (142.0, 112.0, 76.0, 16.0);
+        assert!(point_in_rect(180.0, 120.0, nub, 4.0));
+        assert!(point_in_rect(139.0, 109.0, nub, 4.0)); // inside slack
+        assert!(!point_in_rect(180.0, 60.0, nub, 4.0)); // transparent area above
+        assert!(!point_in_rect(20.0, 120.0, nub, 4.0)); // far left, old 60% zone would say yes
+    }
 }
 
 /// Track cursor over the pill zone. On enter, emit `whimpr://hover` true and
@@ -418,7 +455,10 @@ fn spawn_hover_watcher(app: tauri::AppHandle) {
         let _ = app.run_on_main_thread(move || {
             let Some(w) = app_mt.get_webview_window(OVERLAY_LABEL) else { return };
             let visible = w.is_visible().unwrap_or(false);
-            let over = visible && cursor_over_pill_zone(&w, &app_mt);
+            let mut over = visible && cursor_over_pill_zone(&w, &app_mt);
+            if PILL_HOVER_LOCK.load(Ordering::SeqCst) && WAS_OVER.load(Ordering::SeqCst) {
+                over = true;
+            }
             if over == WAS_OVER.swap(over, Ordering::SeqCst) {
                 return;
             }
@@ -998,6 +1038,9 @@ pub fn run() {
             pill_start,
             set_pill_position,
             reset_pill_position,
+            set_pill_hit_rect,
+            set_pill_hover_lock,
+            open_hub_settings,
             check_model_status,
             download_model,
             get_dictionary,

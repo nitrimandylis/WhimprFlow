@@ -35,9 +35,6 @@ export const palette = {
   success: "#22C3B6",
 } as const;
 
-// Recolored status ring (teal → aqua → periwinkle → violet).
-export const ringStops = ["#1FB6A8", "#43E6D6", "#57B0FF", "#9E86FF", "#43E6D6"] as const;
-
 export const pillFill = {
   base: palette.slate900,
   raised: palette.slate850,
@@ -45,21 +42,8 @@ export const pillFill = {
   shadow: "0 8px 28px rgba(0,0,0,0.55)",
 } as const;
 
-// Geometry, verbatim from the SPEC (logical px).
 export const geometry = {
   morphMs: 420,
-  idleBar: { w: 50, h: 30 },
-  restNub: { w: 30, h: 6, r: 6 },
-  miniPill: { w: 330, h: 32, r: 22.5 },
-  card: { w: 380, h: 130, r: 24 },
-  wave: { minBars: 5, maxBars: 7, minH: 8, maxH: 24 },
-  border: 2,
-  overlayWindow: { w: 440, h: 320 },
-} as const;
-
-export const motion = {
-  ease: "cubic-bezier(0.05, 0.6, 0.4, 0.95)",
-  springDurationS: 0.2,
 } as const;
 
 export const font = {

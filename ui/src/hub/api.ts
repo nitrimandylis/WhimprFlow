@@ -61,6 +61,7 @@ export const PTT_KEYS: { value: PushToTalkKey; label: string }[] = [
 // little accuracy but handles code-switching mid-sentence.
 export const LANGUAGES: { value: string; label: string }[] = [
   { value: "en", label: "English" },
+  { value: "el", label: "Greek" },
   { value: "hi", label: "Hindi" },
   { value: "gu", label: "Gujarati" },
   { value: "es", label: "Spanish" },
