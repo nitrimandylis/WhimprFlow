@@ -342,27 +342,17 @@ fn spawn_display_watcher(app: tauri::AppHandle) {
                 continue;
             };
             last_target = Some(key.clone());
-            let _ = w.set_position(want);
-
-            // Verify rather than assume. `set_position` takes a LogicalPosition,
-            // but which space tao maps that into on a mixed-DPI setup is exactly
-            // what has been guessed wrong before — so read back where the window
-            // actually landed, and on which display.
-            std::thread::sleep(std::time::Duration::from_millis(60));
-            let landed = w
-                .current_monitor()
-                .ok()
-                .flatten()
-                .and_then(|m| m.name().cloned())
-                .unwrap_or_else(|| "?".into());
-            let at = w
-                .outer_position()
-                .map(|p| format!("{},{}", p.x, p.y))
-                .unwrap_or_else(|_| "?".into());
-            eprintln!(
-                "[whimpr] MOVE want logical({:.0},{:.0}) target[{}] -> landed on \"{}\" at physical({})",
-                want.x, want.y, key, landed, at
-            );
+            // Window operations must happen on the main thread (macOS AppKit).
+            let app_mt = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                if let Some(w) = app_mt.get_webview_window(OVERLAY_LABEL) {
+                    let _ = w.set_position(want);
+                    eprintln!(
+                        "[whimpr] MOVE want logical({:.0},{:.0}) target[{}]",
+                        want.x, want.y, key
+                    );
+                }
+            });
         }
     });
 }
@@ -407,7 +397,14 @@ fn spawn_hover_watcher(app: tauri::AppHandle) {
                     was_over = false;
                     let _ = app.emit_to(OVERLAY_LABEL, "whimpr://hover", false);
                     #[cfg(target_os = "macos")]
-                    set_ignores_mouse(&w, true);
+                    {
+                        let app_mt = app.clone();
+                        let _ = app.run_on_main_thread(move || {
+                            if let Some(w) = app_mt.get_webview_window(OVERLAY_LABEL) {
+                                set_ignores_mouse(&w, true);
+                            }
+                        });
+                    }
                 }
                 continue;
             }
@@ -419,7 +416,15 @@ fn spawn_hover_watcher(app: tauri::AppHandle) {
                 // Toggle click-through: off while hovering so buttons work,
                 // back on when leaving so the pill never steals focus.
                 #[cfg(target_os = "macos")]
-                set_ignores_mouse(&w, !over);
+                {
+                    let ignore = !over;
+                    let app_mt = app.clone();
+                    let _ = app.run_on_main_thread(move || {
+                        if let Some(w) = app_mt.get_webview_window(OVERLAY_LABEL) {
+                            set_ignores_mouse(&w, ignore);
+                        }
+                    });
+                }
             }
         }
     });
@@ -531,20 +536,22 @@ fn bar_visible(state: &str) -> bool {
 /// on-screen existence can never drift out of sync with the state it shows.
 pub fn emit_flowbar_state(app: &tauri::AppHandle, state: &'static str) {
     let _ = app.emit_to(OVERLAY_LABEL, "whimpr://flowbar/state", BarStatePayload { state });
-    if let Some(w) = app.get_webview_window(OVERLAY_LABEL) {
-        if bar_visible(state) {
-            // Re-anchor right before showing: the window may have never been
-            // mapped, or the screen layout may have changed while hidden.
-            position_overlay(&w);
-            let _ = w.show();
-            eprintln!("[whimpr] pill -> {state} (overlay shown)");
+    // Window show/hide/position must happen on the main thread (macOS AppKit).
+    let app_mt = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(w) = app_mt.get_webview_window(OVERLAY_LABEL) {
+            if bar_visible(state) {
+                position_overlay(&w);
+                let _ = w.show();
+                eprintln!("[whimpr] pill -> {state} (overlay shown)");
+            } else {
+                let _ = w.hide();
+                eprintln!("[whimpr] pill -> {state} (overlay hidden)");
+            }
         } else {
-            let _ = w.hide();
-            eprintln!("[whimpr] pill -> {state} (overlay hidden)");
+            eprintln!("[whimpr] pill -> {state} (no overlay window)");
         }
-    } else {
-        eprintln!("[whimpr] pill -> {state} (no overlay window)");
-    }
+    });
 }
 
 #[tauri::command]
