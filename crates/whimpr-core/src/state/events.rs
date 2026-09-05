@@ -30,9 +30,9 @@ pub enum TriggerToken {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PipelineEvent {
     /// The session's text was successfully delivered at the caret.
-    Committed { session: SessionId },
+    Committed { session: SessionId, at_ms: u64 },
     /// The session failed (no speech, ASR error, paste declined, …).
-    Failed { session: SessionId },
+    Failed { session: SessionId, at_ms: u64 },
 }
 
 /// The single input type the machine steps on.

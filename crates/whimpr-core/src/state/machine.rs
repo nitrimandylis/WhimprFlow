@@ -165,18 +165,23 @@ impl StateMachine {
 
     fn on_pipeline(&mut self, p: PipelineEvent) -> Vec<Action> {
         match (self.state, p) {
-            (DictationState::Finalizing { session }, PipelineEvent::Committed { session: s })
+            (DictationState::Finalizing { session }, PipelineEvent::Committed { session: s, at_ms })
                 if s == session =>
             {
                 // Session is over internally; the shell decides how long "done" lingers
-                // before the pill returns to idle.
+                // before the pill returns to idle. Ending a session starts the cooldown,
+                // same as cancel, so key bounce right after a paste can't retrigger.
                 self.state = DictationState::Idle;
+                self.last_end_ms = Some(at_ms);
                 vec![Action::ShowBar(BarState::Done)]
             }
-            (DictationState::Finalizing { session }, PipelineEvent::Failed { session: s })
+            (DictationState::Finalizing { session }, PipelineEvent::Failed { session: s, at_ms })
                 if s == session =>
             {
+                // The shell already pushed an error state to the pill; going to Idle
+                // here (not Done) is what keeps that error visible.
                 self.state = DictationState::Idle;
+                self.last_end_ms = Some(at_ms);
                 vec![Action::ShowBar(BarState::Idle)]
             }
             _ => vec![],
@@ -365,9 +370,13 @@ mod tests {
         let mut m = StateMachine::new();
         m.step(down(BindingId::PushToTalk, 0));
         m.step(up(BindingId::PushToTalk, 1_000)); // finalize
-        m.step(Input::Pipeline(PipelineEvent::Committed { session: SessionId(1) }));
-        // last_end came from... pipeline doesn't set last_end; cancel/tick do.
-        // A press during cooldown after a *cancel* is what we guard; verify via cancel path.
+        m.step(Input::Pipeline(PipelineEvent::Committed { session: SessionId(1), at_ms: 2_000 }));
+        // A paste ending a session starts the cooldown too.
+        let a = m.step(down(BindingId::PushToTalk, 2_000 + COOLDOWN_MS - 1));
+        assert!(a.is_empty(), "a press right after a paste is ignored");
+        let a = m.step(down(BindingId::PushToTalk, 2_000 + COOLDOWN_MS + 1));
+        assert!(!a.is_empty());
+
         let mut m2 = StateMachine::new();
         m2.step(down(BindingId::PushToTalk, 0));
         m2.step(Input::Trigger(TriggerToken::Cancel { at_ms: 100 })); // sets last_end=100
@@ -375,6 +384,16 @@ mod tests {
         assert!(a.is_empty(), "a press within the cooldown window is ignored");
         let a = m2.step(down(BindingId::PushToTalk, 100 + COOLDOWN_MS + 1));
         assert!(!a.is_empty(), "a press after cooldown starts a new session");
+    }
+
+    #[test]
+    fn a_failed_pipeline_returns_to_idle_without_the_done_tick() {
+        let mut m = StateMachine::new();
+        m.step(down(BindingId::PushToTalk, 0));
+        m.step(up(BindingId::PushToTalk, 1_000));
+        let a = m.step(Input::Pipeline(PipelineEvent::Failed { session: SessionId(1), at_ms: 1_500 }));
+        assert_eq!(a, vec![Action::ShowBar(BarState::Idle)]);
+        assert!(matches!(m.state(), DictationState::Idle));
     }
 
     #[test]

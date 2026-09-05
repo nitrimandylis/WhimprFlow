@@ -4,12 +4,21 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
+use std::time::Duration;
+
+/// Longest a single cleanup may take before the worker is declared hung and
+/// killed. A 4B model on Metal handles a 20-minute dictation well inside this;
+/// without a bound a stuck worker left the finalize thread (and the Fn key)
+/// waiting forever.
+const CLEANUP_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct LocalWorker {
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    /// Response lines, delivered by a reader thread so a wait can time out.
+    lines: Receiver<String>,
 }
 
 impl LocalWorker {
@@ -21,8 +30,25 @@ impl LocalWorker {
             .stderr(Stdio::inherit())
             .spawn()?;
         let stdin = child.stdin.take().ok_or_else(|| anyhow::anyhow!("no stdin"))?;
-        let stdout = BufReader::new(child.stdout.take().ok_or_else(|| anyhow::anyhow!("no stdout"))?);
-        Ok(Self { child, stdin, stdout })
+        let stdout = child.stdout.take().ok_or_else(|| anyhow::anyhow!("no stdout"))?;
+        let (tx, lines) = channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                let Ok(line) = line else { break };
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+            // stdout closed: the worker exited. Dropping `tx` makes the next
+            // `recv_timeout` return Disconnected, which reads as "worker closed".
+        });
+        Ok(Self { child, stdin, lines })
+    }
+
+    /// Whether the worker process has exited (crashed, or was killed after a
+    /// timeout). A dead worker is dropped by the caller and respawned.
+    pub fn is_dead(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(Some(_)) | Err(_))
     }
 
     /// Send one cleanup request (system prompt + few-shot turns + transcript) and
@@ -46,10 +72,16 @@ impl LocalWorker {
         self.stdin.write_all(line.as_bytes())?;
         self.stdin.flush()?;
 
-        let mut resp = String::new();
-        if self.stdout.read_line(&mut resp)? == 0 {
-            anyhow::bail!("local worker closed");
-        }
+        let resp = match self.lines.recv_timeout(CLEANUP_TIMEOUT) {
+            Ok(line) => line,
+            Err(RecvTimeoutError::Disconnected) => anyhow::bail!("local worker closed"),
+            Err(RecvTimeoutError::Timeout) => {
+                // Kill it rather than leave a wedged process holding the GPU; the
+                // caller sees it as dead and spawns a fresh one.
+                let _ = self.child.kill();
+                anyhow::bail!("local worker timed out after {}s", CLEANUP_TIMEOUT.as_secs());
+            }
+        };
         let v: serde_json::Value = serde_json::from_str(&resp)?;
         if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
             anyhow::bail!("local llm: {err}");
@@ -79,45 +111,18 @@ fn app_support_dir() -> PathBuf {
     }
 }
 
-/// Find the worker binary: next to the app executable (bundled), else the dev build dir.
+/// Find the worker binary next to the app executable. That is where Tauri puts
+/// an `externalBin` inside the bundle (`Contents/MacOS/`), and where `dev.sh`
+/// builds it for `tauri dev` (`target/debug/`, the same dir as the dev binary).
 pub fn worker_bin_path() -> Option<PathBuf> {
     let exe_name = if cfg!(target_os = "windows") {
         "whimpr-llm-worker.exe"
     } else {
         "whimpr-llm-worker"
     };
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let cand = dir.join(exe_name);
-            if cand.exists() {
-                return Some(cand);
-            }
-        }
-    }
-    // Dev fallback: `tauri dev` builds the app in `target/debug`, and `dev.sh`
-    // builds the worker there too — check both profiles.
-    #[cfg(target_os = "windows")]
-    {
-        let base = std::env::current_dir().unwrap_or_default();
-        for profile in ["release", "debug"] {
-            let dev = base.join("target").join(profile).join(exe_name);
-            if dev.exists() {
-                return Some(dev);
-            }
-        }
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let home = std::env::var("HOME").unwrap_or_default();
-        for profile in ["release", "debug"] {
-            let dev =
-                PathBuf::from(&home).join(format!("WhimprFlow/target/{profile}/{exe_name}"));
-            if dev.exists() {
-                return Some(dev);
-            }
-        }
-    }
-    None
+    let exe = std::env::current_exe().ok()?;
+    let cand = exe.parent()?.join(exe_name);
+    cand.exists().then_some(cand)
 }
 
 /// The local cleanup model path (same models dir as whisper/ASR). Prefer the

@@ -211,14 +211,25 @@ where
     }
 }
 
-/// Resample mono `input` from `src_rate` to 16 kHz (what ASR models expect) using
-/// linear interpolation. Adequate for speech recognition; a polyphase resampler is
-/// a later refinement. Returns `input` unchanged when already at 16 kHz.
+/// Resample mono `input` from `src_rate` to 16 kHz (what ASR models expect):
+/// a moving-average low-pass sized to the decimation ratio, then linear
+/// interpolation. The low-pass is what stops content above 8 kHz folding back
+/// into the speech band (aliasing), which plain interpolation did on 48 kHz mics.
+/// Returns `input` unchanged when already at 16 kHz.
 pub fn resample_to_16k(input: &[f32], src_rate: u32) -> Vec<f32> {
     const DST: u32 = 16_000;
     if src_rate == DST || src_rate == 0 || input.is_empty() {
         return input.to_vec();
     }
+    // ponytail: box filter, not a windowed sinc. Good enough for speech; swap in
+    // a proper FIR if Whisper accuracy on 48 kHz mics is ever measured lacking.
+    let window = (src_rate as f64 / DST as f64).round() as usize;
+    let input: std::borrow::Cow<[f32]> = if window > 1 {
+        std::borrow::Cow::Owned(box_filter(input, window))
+    } else {
+        std::borrow::Cow::Borrowed(input)
+    };
+    let input = &input[..];
     let ratio = DST as f64 / src_rate as f64;
     let out_len = ((input.len() as f64) * ratio).round() as usize;
     let mut out = Vec::with_capacity(out_len);
@@ -233,9 +244,63 @@ pub fn resample_to_16k(input: &[f32], src_rate: u32) -> Vec<f32> {
     out
 }
 
+/// Centred moving average of width `window` (odd widths centre exactly; even
+/// widths lean half a sample late, which is irrelevant for ASR).
+fn box_filter(input: &[f32], window: usize) -> Vec<f32> {
+    let half = window / 2;
+    let n = input.len();
+    let mut out = Vec::with_capacity(n);
+    let mut sum = 0.0f32;
+    let mut count = 0usize;
+    // Prime the window with the first `half` samples to the right of index 0.
+    for &x in input.iter().take(half) {
+        sum += x;
+        count += 1;
+    }
+    for i in 0..n {
+        // Add the sample entering on the right, drop the one leaving on the left.
+        if i + half < n {
+            sum += input[i + half];
+            count += 1;
+        }
+        if i > half {
+            sum -= input[i - half - 1];
+            count -= 1;
+        }
+        out.push(sum / count as f32);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn box_filter_smooths_a_spike_and_keeps_dc() {
+        let flat = vec![0.5f32; 10];
+        let out = box_filter(&flat, 3);
+        assert!(out.iter().all(|&v| (v - 0.5).abs() < 1e-6), "DC must pass unchanged");
+        let mut spike = vec![0.0f32; 9];
+        spike[4] = 1.0;
+        let out = box_filter(&spike, 3);
+        assert!((out[4] - 1.0 / 3.0).abs() < 1e-6);
+        assert!((out[3] - 1.0 / 3.0).abs() < 1e-6);
+        assert_eq!(out[1], 0.0);
+    }
+
+    #[test]
+    fn resample_attenuates_a_tone_above_nyquist() {
+        // A 20 kHz tone at 48 kHz would alias into the speech band without the
+        // low-pass; after filtering it must come out much quieter than it went in.
+        let n = 48_000;
+        let tone: Vec<f32> = (0..n)
+            .map(|i| (2.0 * std::f32::consts::PI * 20_000.0 * i as f32 / 48_000.0).sin())
+            .collect();
+        let out = resample_to_16k(&tone, 48_000);
+        let peak = out.iter().fold(0f32, |m, &s| m.max(s.abs()));
+        assert!(peak < 0.35, "aliased tone should be attenuated, got peak {peak}");
+    }
 
     #[test]
     fn resample_48k_to_16k_thirds_the_length() {

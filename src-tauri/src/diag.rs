@@ -44,13 +44,16 @@ pub fn report(app: &AppHandle, failure: InjectionFailure) {
     let dto = ErrorDto { headline: diag.headline, detail: diag.detail };
     *LAST_ERROR.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(dto.clone());
     // Shared emitter: also makes the overlay window exist for the error state.
-    crate::emit_flowbar_state(app, "error");
+    let gen = crate::emit_flowbar_state(app, "error");
     let _ = app.emit("whimpr://error", dto);
 
     let app2 = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(ERROR_LINGER_MS));
-        crate::emit_flowbar_state(&app2, "idle");
+        // Stand down if a newer state (a fresh recording) replaced the error.
+        if crate::bar_gen() == gen {
+            crate::emit_flowbar_state(&app2, "idle");
+        }
     });
 }
 

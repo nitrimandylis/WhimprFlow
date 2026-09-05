@@ -201,6 +201,10 @@ pub struct Settings {
     /// "British spelling, no em dashes, keep sentences short".
     #[serde(default)]
     pub style_instructions: String,
+    /// Keep the text of each dictation on disk for the Hub's history list. Off
+    /// still records word counts and timing for the stats, but no text.
+    #[serde(default = "default_true")]
+    pub save_history: bool,
 }
 
 /// The out-of-the-box hands-free hotkey. Chosen to match what the cofounder
@@ -248,6 +252,7 @@ impl Default for Settings {
             show_in_dock: true,
             microphone: String::new(),
             style_instructions: String::new(),
+            save_history: true,
         }
     }
 }

@@ -18,6 +18,11 @@ const TYPING_WPM_BASELINE: f64 = 45.0;
 
 const DAY_SECS: i64 = 86_400;
 
+/// How many dictations keep their text on disk. Older records keep their word
+/// counts and timing (the stats need them) but lose the text, so the file stops
+/// growing without bound and old dictations are not kept forever.
+pub const MAX_HISTORY_TEXT: usize = 500;
+
 /// One completed dictation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionRecord {
@@ -120,6 +125,13 @@ impl StatsStore {
         app: Option<String>,
     ) {
         self.sessions.push(SessionRecord { ts_unix, words, duration_ms, chars, text, app });
+        // Clear the text of everything older than the newest MAX_HISTORY_TEXT.
+        let n = self.sessions.len();
+        if n > MAX_HISTORY_TEXT {
+            for s in &mut self.sessions[..n - MAX_HISTORY_TEXT] {
+                s.text.clear();
+            }
+        }
     }
 
     /// The most recent `limit` dictations, newest first, for the Home history list.
@@ -255,6 +267,19 @@ mod tests {
         // Today empty -> start at yesterday; 3 consecutive days back, then a gap.
         assert_eq!(sum.day_streak, 3);
         assert_eq!(sum.words_today, 0);
+    }
+
+    #[test]
+    fn old_records_lose_their_text_but_keep_their_counts() {
+        let mut s = StatsStore::default();
+        for i in 0..(MAX_HISTORY_TEXT + 3) {
+            s.record(2, 1_000, 10, NOW + i as u64, format!("text {i}"), None);
+        }
+        assert_eq!(s.sessions.len(), MAX_HISTORY_TEXT + 3);
+        assert!(s.sessions[..3].iter().all(|r| r.text.is_empty()));
+        assert!(s.sessions[3..].iter().all(|r| !r.text.is_empty()));
+        assert_eq!(s.summary(0, NOW).total_words, 2 * (MAX_HISTORY_TEXT as u64 + 3));
+        assert_eq!(s.history(1_000).len(), MAX_HISTORY_TEXT);
     }
 
     #[test]

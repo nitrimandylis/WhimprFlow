@@ -23,6 +23,16 @@ use tauri::{
 
 const OVERLAY_LABEL: &str = "whimpr_bar";
 
+/// Stamp of the most recent bar state pushed through `emit_flowbar_state`.
+/// Delayed "back to idle" timers (the 500ms done tick, the 4.5s error linger)
+/// compare against it and stand down if anything newer has been shown since —
+/// otherwise a dictation started inside that window had its pill hidden.
+static BAR_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn bar_gen() -> u64 {
+    BAR_GEN.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 /// The overlay's size in LOGICAL points — the same values it is built with.
 ///
 /// Deliberately constants rather than reading `outer_size()`: that returns
@@ -225,6 +235,15 @@ fn list_microphones() -> Vec<String> {
     whimpr_audio::input_device_names()
 }
 
+/// The `.app` bundle this process is running from, if it is one (the bundle
+/// path is the ancestor of `Contents/MacOS/<exe>`). `None` under `tauri dev`.
+#[cfg(target_os = "macos")]
+fn app_bundle_path() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let bundle = exe.parent()?.parent()?.parent()?;
+    (bundle.extension()? == "app").then(|| bundle.to_path_buf())
+}
+
 /// Install or remove the login item.
 ///
 /// Deliberately a LaunchAgent that shells out to `open -a` rather than launching
@@ -244,7 +263,13 @@ fn apply_launch_at_login(enabled: bool) {
     if std::fs::create_dir_all(&dir).is_err() {
         return;
     }
-    let body = r#"<?xml version="1.0" encoding="UTF-8"?>
+    // Point at the bundle actually running, so an install outside /Applications
+    // still launches; fall back to the conventional location under `tauri dev`.
+    let app = app_bundle_path()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "/Applications/WhimprFlow.app".to_string());
+    let body = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -254,13 +279,14 @@ fn apply_launch_at_login(enabled: bool) {
     <array>
         <string>/usr/bin/open</string>
         <string>-a</string>
-        <string>/Applications/WhimprFlow.app</string>
+        <string>{app}</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
 </dict>
 </plist>
-"#;
+"#
+    );
     if let Err(e) = std::fs::write(&plist, body) {
         eprintln!("[whimpr] could not write the login item: {e}");
     }
@@ -303,23 +329,26 @@ fn set_pill_position(x: i32, y: i32) {
 /// `position_overlay` previously ran only at startup, on a settings change and at
 /// the start of a dictation — so moving to another screen left the pill behind
 /// until you next spoke, which read as "follow active display doesn't work".
+///
+/// The thread only keeps time; every display and window query runs on the main
+/// thread, where AppKit requires them (the same class of crash the earlier
+/// "dispatch window operations to main thread" fix addressed).
 fn spawn_display_watcher(app: tauri::AppHandle) {
-    std::thread::spawn(move || {
-        // Name of the display the pill was last placed on.
-        let mut last_target: Option<String> = None;
-        loop {
-            // Short enough that moving to another screen feels like the pill came
-            // with you, rather than catching up a beat later.
-            std::thread::sleep(std::time::Duration::from_millis(220));
+    // Name + work area of the display the pill was last placed on.
+    static LAST_TARGET: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+    std::thread::spawn(move || loop {
+        // Short enough that moving to another screen feels like the pill came
+        // with you, rather than catching up a beat later.
+        std::thread::sleep(std::time::Duration::from_millis(220));
 
-            let settings = hotkey::current_settings();
-            if !settings.pill_follows_active_display {
-                continue;
-            }
-            let Some(w) = app.get_webview_window(OVERLAY_LABEL) else {
-                continue;
-            };
-            let Some(monitor) = pill_monitor(&w, true) else { continue };
+        let settings = hotkey::current_settings();
+        if !settings.pill_follows_active_display {
+            continue;
+        }
+        let app_mt = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let Some(w) = app_mt.get_webview_window(OVERLAY_LABEL) else { return };
+            let Some(monitor) = pill_monitor(&w, true) else { return };
 
             // Move when the target display changes OR when that display's work
             // area does. Both matter and each was fixed at the cost of the other
@@ -335,25 +364,18 @@ fn spawn_display_watcher(app: tauri::AppHandle) {
                 a.size.width,
                 a.size.height
             );
-            if last_target.as_deref() == Some(key.as_str()) {
-                continue;
+            let mut last = LAST_TARGET.lock().unwrap();
+            if last.as_deref() == Some(key.as_str()) {
+                return;
             }
-            let Some(want) = desired_overlay_position(&w, &settings) else {
-                continue;
-            };
-            last_target = Some(key.clone());
-            // Window operations must happen on the main thread (macOS AppKit).
-            let app_mt = app.clone();
-            let _ = app.run_on_main_thread(move || {
-                if let Some(w) = app_mt.get_webview_window(OVERLAY_LABEL) {
-                    let _ = w.set_position(want);
-                    eprintln!(
-                        "[whimpr] MOVE want logical({:.0},{:.0}) target[{}]",
-                        want.x, want.y, key
-                    );
-                }
-            });
-        }
+            let Some(want) = desired_overlay_position(&w, &settings) else { return };
+            *last = Some(key.clone());
+            let _ = w.set_position(want);
+            eprintln!(
+                "[whimpr] MOVE want logical({:.0},{:.0}) target[{}]",
+                want.x, want.y, key
+            );
+        });
     });
 }
 
@@ -385,48 +407,27 @@ fn cursor_over_pill_zone(w: &WebviewWindow, app: &tauri::AppHandle) -> bool {
 /// Track cursor over the pill zone. On enter, emit `whimpr://hover` true and
 /// temporarily accept mouse events so the action buttons are clickable.
 /// On exit, emit false and go back to click-through.
+///
+/// Same shape as the display watcher: the thread ticks, the main thread asks.
 fn spawn_hover_watcher(app: tauri::AppHandle) {
-    std::thread::spawn(move || {
-        let mut was_over = false;
-        loop {
-            std::thread::sleep(std::time::Duration::from_millis(60));
-
-            let Some(w) = app.get_webview_window(OVERLAY_LABEL) else { continue };
-            if !w.is_visible().unwrap_or(false) {
-                if was_over {
-                    was_over = false;
-                    let _ = app.emit_to(OVERLAY_LABEL, "whimpr://hover", false);
-                    #[cfg(target_os = "macos")]
-                    {
-                        let app_mt = app.clone();
-                        let _ = app.run_on_main_thread(move || {
-                            if let Some(w) = app_mt.get_webview_window(OVERLAY_LABEL) {
-                                set_ignores_mouse(&w, true);
-                            }
-                        });
-                    }
-                }
-                continue;
+    static WAS_OVER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    use std::sync::atomic::Ordering;
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        let app_mt = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let Some(w) = app_mt.get_webview_window(OVERLAY_LABEL) else { return };
+            let visible = w.is_visible().unwrap_or(false);
+            let over = visible && cursor_over_pill_zone(&w, &app_mt);
+            if over == WAS_OVER.swap(over, Ordering::SeqCst) {
+                return;
             }
-
-            let over = cursor_over_pill_zone(&w, &app);
-            if over != was_over {
-                was_over = over;
-                let _ = app.emit_to(OVERLAY_LABEL, "whimpr://hover", over);
-                // Toggle click-through: off while hovering so buttons work,
-                // back on when leaving so the pill never steals focus.
-                #[cfg(target_os = "macos")]
-                {
-                    let ignore = !over;
-                    let app_mt = app.clone();
-                    let _ = app.run_on_main_thread(move || {
-                        if let Some(w) = app_mt.get_webview_window(OVERLAY_LABEL) {
-                            set_ignores_mouse(&w, ignore);
-                        }
-                    });
-                }
-            }
-        }
+            let _ = app_mt.emit_to(OVERLAY_LABEL, "whimpr://hover", over);
+            // Toggle click-through: off while hovering so buttons work,
+            // back on when leaving so the pill never steals focus.
+            #[cfg(target_os = "macos")]
+            set_ignores_mouse(&w, !over);
+        });
     });
 }
 
@@ -534,7 +535,8 @@ fn bar_visible(state: &str) -> bool {
 /// state machine in `hotkey.rs`, the Windows pipeline in `win.rs`, the
 /// diagnostics path in `diag.rs`, and the tray demo below), so the pill's
 /// on-screen existence can never drift out of sync with the state it shows.
-pub fn emit_flowbar_state(app: &tauri::AppHandle, state: &'static str) {
+pub fn emit_flowbar_state(app: &tauri::AppHandle, state: &'static str) -> u64 {
+    let gen = BAR_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
     let _ = app.emit_to(OVERLAY_LABEL, "whimpr://flowbar/state", BarStatePayload { state });
     // Window show/hide/position must happen on the main thread (macOS AppKit).
     let app_mt = app.clone();
@@ -552,6 +554,7 @@ pub fn emit_flowbar_state(app: &tauri::AppHandle, state: &'static str) {
             eprintln!("[whimpr] pill -> {state} (no overlay window)");
         }
     });
+    gen
 }
 
 #[tauri::command]
@@ -643,52 +646,68 @@ fn copy_to_clipboard(text: String) -> Result<(), String> {
 /// step in onboarding when this returns false.
 #[tauri::command]
 fn check_model_status() -> bool {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let dir = std::path::PathBuf::from(home).join("Library/Application Support/WhimprFlow/models");
-    // Same priority list as hotkey.rs's model_path().
-    ["ggml-large-v3-turbo.bin", "ggml-medium.en.bin", "ggml-small.en.bin", "ggml-base.en.bin"]
-        .iter()
-        .any(|name| dir.join(name).exists())
+    hotkey::model_path().exists()
 }
 
-/// Download the default Whisper model (ggml-base.en.bin, ~148 MB). Emits
+/// Whether a model download is already running, so a second click (or a
+/// second window) cannot start another writer on the same partial file.
+static DOWNLOADING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Download the starter Whisper model (~148 MB). Emits
 /// `whimpr://model/progress` events with { percent: u8 } so the UI can
 /// show a progress bar. Runs on a background thread; returns immediately.
+///
+/// English gets `ggml-base.en.bin`, which is the more accurate of the two for
+/// English. Any other language setting gets the multilingual `ggml-base.bin`:
+/// the `.en` model ignores the language setting entirely, which made the
+/// pill's language switch a no-op after onboarding.
 #[tauri::command]
 fn download_model(app: tauri::AppHandle) {
+    use std::sync::atomic::Ordering;
+    if DOWNLOADING.swap(true, Ordering::SeqCst) {
+        return;
+    }
     std::thread::spawn(move || {
-        let home = std::env::var("HOME").unwrap_or_default();
-        let dir = std::path::PathBuf::from(home)
-            .join("Library/Application Support/WhimprFlow/models");
-        let _ = std::fs::create_dir_all(&dir);
-        let dest = dir.join("ggml-base.en.bin");
-        if dest.exists() {
-            let _ = app.emit("whimpr://model/progress", serde_json::json!({ "percent": 100 }));
-            let _ = app.emit("whimpr://model/done", serde_json::json!({ "ok": true }));
-            return;
-        }
-
-        let url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
-        let tmp = dest.with_extension("bin.partial");
-        match download_with_progress(url, &tmp, &app) {
+        let result = download_model_blocking(&app);
+        DOWNLOADING.store(false, Ordering::SeqCst);
+        match result {
             Ok(()) => {
-                if let Err(e) = std::fs::rename(&tmp, &dest) {
-                    eprintln!("[whimpr] model rename failed: {e}");
-                    let _ = app.emit("whimpr://model/done", serde_json::json!({ "ok": false, "error": e.to_string() }));
-                    return;
-                }
                 let _ = app.emit("whimpr://model/done", serde_json::json!({ "ok": true }));
                 // Reload ASR now that the model exists.
                 hotkey::rebuild_asr(&hotkey::current_settings());
             }
             Err(e) => {
                 eprintln!("[whimpr] model download failed: {e}");
-                let _ = std::fs::remove_file(&tmp);
                 let _ = app.emit("whimpr://model/done", serde_json::json!({ "ok": false, "error": e.to_string() }));
             }
         }
     });
 }
+
+fn download_model_blocking(app: &tauri::AppHandle) -> anyhow::Result<()> {
+    let dir = hotkey::models_dir();
+    std::fs::create_dir_all(&dir)?;
+    let name = if hotkey::current_settings().language == "en" {
+        "ggml-base.en.bin"
+    } else {
+        "ggml-base.bin"
+    };
+    let dest = dir.join(name);
+    if dest.exists() {
+        let _ = app.emit("whimpr://model/progress", serde_json::json!({ "percent": 100 }));
+        return Ok(());
+    }
+    let url = format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{name}");
+    let tmp = dest.with_extension("bin.partial");
+    let result = download_with_progress(&url, &tmp, app);
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result?;
+    std::fs::rename(&tmp, &dest)?;
+    Ok(())
+}
+
 
 fn download_with_progress(
     url: &str,
@@ -717,6 +736,9 @@ fn download_with_progress(
         }
     }
     file.flush()?;
+    if total > 0 && downloaded != total {
+        anyhow::bail!("download ended early: {downloaded} of {total} bytes");
+    }
     let _ = app.emit("whimpr://model/progress", serde_json::json!({ "percent": 100 }));
     Ok(())
 }
@@ -759,6 +781,9 @@ struct StatusReport {
     hotkey_wired: bool,
     has_openai_key: bool,
     has_anthropic_key: bool,
+    /// A key saved specifically for cloud ASR (a Groq key, say). When absent,
+    /// cloud ASR falls back to the OpenAI key.
+    has_asr_key: bool,
 }
 
 #[tauri::command]
@@ -772,8 +797,14 @@ fn get_status() -> StatusReport {
         charged_to: p.charged_to,
         microphone_hint: p.microphone_hint,
         hotkey_wired: hotkey::tap_live(),
-        has_openai_key: has_key("openai_api_key"),
-        has_anthropic_key: has_key("anthropic_api_key"),
+        // Same readers the providers use, so the Hub never says "no key" while
+        // requests go out with one from the environment.
+        has_openai_key: hotkey::read_openai_key().is_some(),
+        has_anthropic_key: hotkey::read_anthropic_key().is_some(),
+        has_asr_key: keyring::Entry::new("com.whimpr.whimprflow", "asr_api_key")
+            .ok()
+            .and_then(|e| e.get_password().ok())
+            .is_some_and(|k| !k.trim().is_empty()),
     }
 }
 
@@ -784,14 +815,6 @@ fn get_status() -> StatusReport {
 #[tauri::command]
 fn get_last_error() -> Option<diag::ErrorDto> {
     diag::last_error()
-}
-
-fn has_key(account: &str) -> bool {
-    keyring::Entry::new("com.whimpr.whimprflow", account)
-        .ok()
-        .and_then(|e| e.get_password().ok())
-        .map(|k| !k.trim().is_empty())
-        .unwrap_or(false)
 }
 
 #[cfg(target_os = "macos")]
@@ -888,6 +911,7 @@ fn set_api_key(provider: String, key: String) -> Result<(), String> {
     let account = match provider.as_str() {
         "openai" => "openai_api_key",
         "anthropic" => "anthropic_api_key",
+        "asr" => "asr_api_key",
         _ => return Err(format!("unknown provider {provider}")),
     };
     let entry =
@@ -900,8 +924,10 @@ fn set_api_key(provider: String, key: String) -> Result<(), String> {
         entry.set_password(key).map_err(|e| e.to_string())?;
     }
     hotkey::rebuild_providers();
-    // Cloud ASR reuses the OpenAI key, so a key change may affect it too.
-    hotkey::rebuild_asr(&hotkey::current_settings());
+    // Cloud ASR uses the ASR key, or the OpenAI key as fallback.
+    if account != "anthropic_api_key" {
+        hotkey::rebuild_asr(&hotkey::current_settings());
+    }
     Ok(())
 }
 
@@ -1061,8 +1087,12 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => show_hub(app),
-                    "demo_rec" => emit_flowbar_state(app, "recording"),
-                    "demo_idle" => emit_flowbar_state(app, "idle"),
+                    "demo_rec" => {
+                        emit_flowbar_state(app, "recording");
+                    }
+                    "demo_idle" => {
+                        emit_flowbar_state(app, "idle");
+                    }
                     "quit" => app.exit(0),
                     _ => {}
                 });

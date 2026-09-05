@@ -11,6 +11,25 @@ use whimpr_core::cleanup::{build_messages, CleanupContext, CleanupProvider, Prov
 /// Default OpenAI Chat Completions endpoint.
 const OPENAI_DEFAULT_URL: &str = "https://api.openai.com/v1/chat/completions";
 
+/// A user-supplied API root, trimmed, or `None` when it is empty or would send
+/// the bearer key in the clear. Only `https://` is accepted, plus plain `http://`
+/// to the local machine (a llama.cpp or LM Studio server on localhost).
+fn safe_base_url(base_url: Option<String>) -> Option<String> {
+    let base = base_url?.trim().trim_end_matches('/').to_string();
+    if base.is_empty() {
+        return None;
+    }
+    let local = base.starts_with("http://localhost")
+        || base.starts_with("http://127.0.0.1")
+        || base.starts_with("http://[::1]");
+    if base.starts_with("https://") || local {
+        Some(base)
+    } else {
+        eprintln!("[whimpr] ignoring base URL {base:?}: only https:// (or http:// to localhost) is allowed, the API key would travel in the clear");
+        None
+    }
+}
+
 /// Output token budget for a cleanup, scaled to the transcript so a long
 /// dictation's cleaned text is not truncated with its last words dropped
 /// (Publik Test 2: "sometimes the last few words I say are cut off … because of
@@ -49,9 +68,9 @@ impl OpenAiProvider {
             .timeout(Duration::from_secs(15))
             .build()
             .expect("failed to build HTTP client");
-        let url = match base_url.map(|s| s.trim().trim_end_matches('/').to_string()) {
-            Some(base) if !base.is_empty() => format!("{base}/chat/completions"),
-            _ => OPENAI_DEFAULT_URL.to_string(),
+        let url = match safe_base_url(base_url) {
+            Some(base) => format!("{base}/chat/completions"),
+            None => OPENAI_DEFAULT_URL.to_string(),
         };
         Self {
             client,
@@ -193,6 +212,9 @@ pub struct CloudAsr {
     model: String,
     /// Full transcriptions URL. Defaults to OpenAI's when empty.
     url: String,
+    /// Whisper language code, or "auto" to let the service detect it. Behind a
+    /// lock so the Hub can change it without rebuilding the engine.
+    language: std::sync::RwLock<String>,
 }
 
 impl CloudAsr {
@@ -207,15 +229,16 @@ impl CloudAsr {
             .timeout(Duration::from_secs(30))
             .build()
             .expect("failed to build HTTP client");
-        let url = match base_url.map(|s| s.trim().trim_end_matches('/').to_string()) {
-            Some(base) if !base.is_empty() => format!("{base}/audio/transcriptions"),
-            _ => OPENAI_ASR_DEFAULT_URL.to_string(),
+        let url = match safe_base_url(base_url) {
+            Some(base) => format!("{base}/audio/transcriptions"),
+            None => OPENAI_ASR_DEFAULT_URL.to_string(),
         };
         Self {
             client,
             api_key,
             model: model.into(),
             url,
+            language: std::sync::RwLock::new("auto".to_string()),
         }
     }
 }
@@ -230,10 +253,15 @@ impl AsrEngine for CloudAsr {
         let part = reqwest::blocking::multipart::Part::bytes(wav)
             .file_name("audio.wav")
             .mime_str("audio/wav")?;
-        let form = reqwest::blocking::multipart::Form::new()
+        let mut form = reqwest::blocking::multipart::Form::new()
             .part("file", part)
             .text("model", self.model.clone())
             .text("response_format", "json");
+        // The same setting local Whisper honours; omitted = the service detects.
+        let language = self.language.read().map(|g| g.clone()).unwrap_or_default();
+        if !language.is_empty() && language != "auto" {
+            form = form.text("language", language);
+        }
 
         let resp = self
             .client
@@ -254,6 +282,12 @@ impl AsrEngine for CloudAsr {
             text,
             confidence: None,
         })
+    }
+
+    fn set_language(&self, language: &str) {
+        if let Ok(mut g) = self.language.write() {
+            *g = language.to_string();
+        }
     }
 }
 
@@ -279,7 +313,22 @@ fn encode_wav_16k_mono(pcm: &[f32]) -> anyhow::Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::cleanup_max_tokens;
+    use super::{cleanup_max_tokens, safe_base_url};
+
+    #[test]
+    fn only_https_or_localhost_base_urls_are_used() {
+        assert_eq!(safe_base_url(None), None);
+        assert_eq!(safe_base_url(Some("  ".into())), None);
+        assert_eq!(
+            safe_base_url(Some("https://openrouter.ai/api/v1/".into())),
+            Some("https://openrouter.ai/api/v1".into())
+        );
+        assert_eq!(
+            safe_base_url(Some("http://localhost:1234/v1".into())),
+            Some("http://localhost:1234/v1".into())
+        );
+        assert_eq!(safe_base_url(Some("http://example.com/v1".into())), None);
+    }
 
     #[test]
     fn short_dictation_keeps_the_floor() {

@@ -234,17 +234,24 @@ mod imp {
                  Privacy & Security → Accessibility, then relaunch)"
             ));
         }
+        use arboard::SetExtApple;
         let mut cb = Clipboard::new()?;
         // ponytail: only text is saved/restored. If the user had an image or
         // file on the clipboard, it gets replaced. Full NSPasteboard save/restore
         // (all types) needs raw ObjC FFI; add if users report losing clipboard images.
         let saved = cb.get_text().ok();
-        cb.set_text(text.to_string())?;
+        // Marked concealed (`org.nspasteboard.ConcealedType`) so clipboard
+        // managers skip it: dictated text only transits the clipboard, it should
+        // not end up in Raycast/Maccy/Paste history.
+        cb.set().exclude_from_history().text(text.to_string())?;
         // Give the pasteboard a moment to settle before the paste keystroke.
         std::thread::sleep(Duration::from_millis(60));
         post_cmd_v();
-        // Let the target consume the paste before we restore the old clipboard.
-        std::thread::sleep(Duration::from_millis(150));
+        // Let the target consume the paste before restoring the old clipboard.
+        // 150ms lost the race against Electron and browser targets, which then
+        // pasted the OLD clipboard; there is no way to observe the paste landing,
+        // so this is a margin, not a measurement.
+        std::thread::sleep(Duration::from_millis(400));
         if let Some(prev) = saved {
             let _ = cb.set_text(prev);
         }

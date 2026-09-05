@@ -31,7 +31,7 @@ mod imp {
         CleanupContext, CleanupMode, CleanupProvider, Input, PipelineEvent, StateMachine,
         TriggerToken,
     };
-    use whimpr_core::BindingId;
+    use whimpr_core::{BindingId, SessionId};
 
     const OVERLAY_LABEL: &str = "whimpr_bar";
 
@@ -105,11 +105,23 @@ mod imp {
     /// against the ~1s background load right after launch.
     static ASR_MODEL_MISSING: AtomicBool = AtomicBool::new(false);
     static TARGET_APP: OnceLock<Mutex<Option<String>>> = OnceLock::new();
-    static CAPTURE: OnceLock<Mutex<Option<whimpr_audio::CaptureHandle>>> = OnceLock::new();
+    /// The live microphone capture, tagged with the session that owns it, so a
+    /// capture that finishes starting after its session was already discarded
+    /// (a sub-200ms tap) is stopped instead of leaking with the mic left open.
+    static CAPTURE: OnceLock<Mutex<Option<(SessionId, whimpr_audio::CaptureHandle)>>> =
+        OnceLock::new();
     static ASR: OnceLock<Mutex<Option<Arc<dyn whimpr_core::AsrEngine>>>> = OnceLock::new();
-    static OPENAI: OnceLock<Mutex<Option<whimpr_cleanup::OpenAiProvider>>> = OnceLock::new();
-    static ANTHROPIC: OnceLock<Mutex<Option<whimpr_cleanup::AnthropicProvider>>> = OnceLock::new();
-    static LOCAL: OnceLock<Mutex<Option<crate::local_llm::LocalWorker>>> = OnceLock::new();
+    /// Bumped on every local-ASR (re)load so a slow, superseded load cannot
+    /// overwrite the engine a later settings change installed.
+    static ASR_LOAD_GEN: AtomicU64 = AtomicU64::new(0);
+    // Providers are behind Arc so a cleanup can clone one out and release the
+    // slot lock before the request; holding the lock for a 15s HTTP call (or a
+    // local inference) froze every settings write that needed to rebuild them.
+    static OPENAI: OnceLock<Mutex<Option<Arc<whimpr_cleanup::OpenAiProvider>>>> = OnceLock::new();
+    static ANTHROPIC: OnceLock<Mutex<Option<Arc<whimpr_cleanup::AnthropicProvider>>>> =
+        OnceLock::new();
+    static LOCAL: OnceLock<Mutex<Option<Arc<Mutex<crate::local_llm::LocalWorker>>>>> =
+        OnceLock::new();
     static SETTINGS: OnceLock<Mutex<whimpr_core::Settings>> = OnceLock::new();
     /// Last state pushed to the pill, so UI-driven controls can act correctly.
     static LAST_BAR: OnceLock<Mutex<&'static str>> = OnceLock::new();
@@ -126,24 +138,32 @@ mod imp {
         text: String,
     }
 
-    /// The whisper ASR model to load: prefer the most accurate one present, in
-    /// descending quality order, falling back to the small base model. Bigger
-    /// English models mis-hear names/technical terms far less (and better ASR means
-    /// less for cleanup and the dictionary to fix downstream).
-    fn model_path() -> PathBuf {
-        let dir = support_dir().join("models");
-        for name in [
-            "ggml-large-v3-turbo.bin",
-            "ggml-medium.en.bin",
-            "ggml-small.en.bin",
-            "ggml-base.en.bin",
-        ] {
-            let p = dir.join(name);
-            if p.exists() {
-                return p;
-            }
-        }
-        dir.join("ggml-base.en.bin")
+    /// Whisper model files, best first. Bigger models mis-hear names and
+    /// technical terms far less (and better ASR means less for cleanup and the
+    /// dictionary to fix downstream). Shared with the Hub's model-status check
+    /// and the onboarding download so the three can never disagree.
+    pub const MODEL_NAMES: &[&str] = &[
+        "ggml-large-v3-turbo.bin",
+        "ggml-medium.en.bin",
+        "ggml-small.en.bin",
+        "ggml-base.bin",
+        "ggml-base.en.bin",
+    ];
+
+    /// The models directory: `~/Library/Application Support/WhimprFlow/models`.
+    pub fn models_dir() -> PathBuf {
+        support_dir().join("models")
+    }
+
+    /// The whisper ASR model to load: the best one present, else the base model
+    /// path (which then does not exist, and the caller reports it).
+    pub fn model_path() -> PathBuf {
+        let dir = models_dir();
+        MODEL_NAMES
+            .iter()
+            .map(|name| dir.join(name))
+            .find(|p| p.exists())
+            .unwrap_or_else(|| dir.join("ggml-base.en.bin"))
     }
 
     fn support_dir() -> PathBuf {
@@ -176,11 +196,13 @@ mod imp {
             return;
         }
         let app = TARGET_APP.get().and_then(|m| m.lock().unwrap().clone());
+        // History off: keep the counts the stats need, never the words.
+        let text = if current_settings().save_history { text.to_string() } else { String::new() };
         if let Some(m) = STATS.get() {
             let mut store = m.lock().unwrap();
             let duration_ms = (duration_secs.max(0.0) * 1000.0) as u32;
             let chars = text.chars().count() as u32;
-            store.record(words, duration_ms, chars, unix_now(), text.to_string(), app);
+            store.record(words, duration_ms, chars, unix_now(), text, app);
             let _ = store.save(&stats_path());
         }
     }
@@ -266,11 +288,16 @@ mod imp {
             .map(|k| k.trim().to_string())
             .filter(|k| !k.is_empty())
     }
-    fn read_openai_key() -> Option<String> {
+    pub fn read_openai_key() -> Option<String> {
         read_key("openai_api_key", "OPENAI_API_KEY")
     }
-    fn read_anthropic_key() -> Option<String> {
+    pub fn read_anthropic_key() -> Option<String> {
         read_key("anthropic_api_key", "ANTHROPIC_API_KEY")
+    }
+    /// The cloud-ASR key: its own slot (a Groq key, say), falling back to the
+    /// OpenAI key so the old single-key setup keeps working.
+    pub fn read_asr_key() -> Option<String> {
+        read_key("asr_api_key", "WHIMPR_ASR_API_KEY").or_else(read_openai_key)
     }
 
     /// A snapshot of the current settings.
@@ -281,14 +308,23 @@ mod imp {
             .unwrap_or_default()
     }
     /// Apply new settings and rebuild the cloud providers (picks up model changes).
+    /// The speech engine is only rebuilt when a field it depends on changed:
+    /// every save used to reload the 1.5 GB Whisper model, and typing in any
+    /// settings field saves every 400ms.
     pub fn update_settings(new: whimpr_core::Settings) {
+        let old = current_settings();
         if let Some(m) = SETTINGS.get() {
             *m.lock().unwrap() = new.clone();
         }
         let _ = new.save(&settings_path());
         apply_live_settings(&new);
         rebuild_providers();
-        rebuild_asr(&new);
+        let asr_changed = old.asr_mode != new.asr_mode
+            || old.asr_base_url != new.asr_base_url
+            || old.asr_model != new.asr_model;
+        if asr_changed {
+            rebuild_asr(&new);
+        }
     }
 
     // ── Pill controls ────────────────────────────────────────────────────────
@@ -307,26 +343,11 @@ mod imp {
         handle_input(Input::Trigger(TriggerToken::Cancel { at_ms: now_ms() }));
     }
 
-    /// Finish now and insert what has been said so far.
+    /// Finish now and insert what has been said so far. `Stop` finalizes a live
+    /// recording in either mode, so this needs no guess about which key or
+    /// gesture started it.
     pub fn ui_stop() {
-        let t = now_ms();
-        if last_bar() == "locked" {
-            // Hands-free: a tap of the key is what ends it.
-            handle_input(Input::Trigger(TriggerToken::Down {
-                binding: BindingId::PushToTalk,
-                at_ms: t,
-            }));
-            handle_input(Input::Trigger(TriggerToken::Up {
-                binding: BindingId::PushToTalk,
-                at_ms: t + 1,
-            }));
-        } else {
-            // Held: releasing finalises it.
-            handle_input(Input::Trigger(TriggerToken::Up {
-                binding: BindingId::PushToTalk,
-                at_ms: t,
-            }));
-        }
+        handle_input(Input::Trigger(TriggerToken::Stop { at_ms: now_ms() }));
     }
 
     /// Start a hands-free dictation from a click on the pill.
@@ -416,6 +437,8 @@ mod imp {
             openai.is_some(),
             anthropic.is_some()
         );
+        let openai = openai.map(Arc::new);
+        let anthropic = anthropic.map(Arc::new);
         match OPENAI.get() {
             Some(m) => *m.lock().unwrap() = openai,
             None => {
@@ -435,13 +458,15 @@ mod imp {
     /// Cloud is built synchronously (just an HTTP client); local Whisper loads
     /// off-thread since parsing the model takes ~1s.
     pub fn rebuild_asr(settings: &whimpr_core::Settings) {
+        // Any load in flight from an earlier call is now stale.
+        let gen = ASR_LOAD_GEN.fetch_add(1, Ordering::SeqCst) + 1;
         match settings.asr_mode {
             whimpr_core::AsrMode::Cloud => {
-                let key = read_openai_key();
+                let key = read_asr_key();
                 let Some(key) = key else {
                     eprintln!(
-                        "[whimpr] ASR: cloud mode but no OpenAI-slot API key saved \
-                         (cloud ASR reuses the OpenAI API key in Settings)"
+                        "[whimpr] ASR: cloud mode but no API key saved (set the cloud ASR \
+                         key, or the OpenAI key, in Settings)"
                     );
                     return;
                 };
@@ -450,12 +475,13 @@ mod imp {
                     "[whimpr] ASR: cloud mode, model={model}, base_url={:?}",
                     settings.asr_base_url
                 );
-                let engine: Arc<dyn whimpr_core::AsrEngine> =
-                    Arc::new(whimpr_cleanup::CloudAsr::with_base_url(
-                        key,
-                        model,
-                        Some(settings.asr_base_url.clone()),
-                    ));
+                let engine = whimpr_cleanup::CloudAsr::with_base_url(
+                    key,
+                    model,
+                    Some(settings.asr_base_url.clone()),
+                );
+                let engine: Arc<dyn whimpr_core::AsrEngine> = Arc::new(engine);
+                engine.set_language(&settings.language);
                 if let Some(slot) = ASR.get() {
                     *slot.lock().unwrap() = Some(engine);
                 }
@@ -473,6 +499,10 @@ mod imp {
                     }
                     match whimpr_asr::WhisperEngine::load(&path) {
                         Ok(engine) => {
+                            if ASR_LOAD_GEN.load(Ordering::SeqCst) != gen {
+                                eprintln!("[whimpr] ASR load superseded, discarding");
+                                return;
+                            }
                             engine.set_language(&language);
                             let engine: Arc<dyn whimpr_core::AsrEngine> = Arc::new(engine);
                             if let Some(slot) = ASR.get() {
@@ -500,14 +530,44 @@ mod imp {
                 std::thread::spawn(|| {
                     if let Some(w) = crate::local_llm::spawn_default() {
                         if let Some(slot) = LOCAL.get() {
-                            *slot.lock().unwrap() = Some(w);
+                            let mut guard = slot.lock().unwrap();
+                            // Two rapid settings saves can both see an empty slot;
+                            // the second worker to arrive is dropped (and killed).
+                            if guard.is_none() {
+                                *guard = Some(Arc::new(Mutex::new(w)));
+                            }
                         }
                     }
                 });
             }
         } else {
+            // Dropping the Arc here does not kill a worker mid-inference: the
+            // cleanup thread holds its own clone until it is done.
             *slot.lock().unwrap() = None;
         }
+    }
+
+    /// The local worker, if one is running. Clones the handle out so the slot
+    /// lock is not held during inference.
+    fn local_worker() -> Option<Arc<Mutex<crate::local_llm::LocalWorker>>> {
+        LOCAL.get().and_then(|m| m.lock().unwrap().clone())
+    }
+
+    /// After a local cleanup error: if the worker process is gone (crashed, or
+    /// killed on timeout), clear the slot and start a fresh one so the NEXT
+    /// dictation gets cleanup again instead of failing forever.
+    fn respawn_local_worker_if_dead(worker: &Arc<Mutex<crate::local_llm::LocalWorker>>) {
+        if !worker.lock().unwrap().is_dead() {
+            return;
+        }
+        eprintln!("[whimpr] local LLM worker died — restarting it");
+        if let Some(slot) = LOCAL.get() {
+            let mut guard = slot.lock().unwrap();
+            if guard.as_ref().is_some_and(|w| Arc::ptr_eq(w, worker)) {
+                *guard = None;
+            }
+        }
+        sync_local_worker(current_settings().cleanup_mode);
     }
 
     /// Clean a raw transcript per the current settings (mode + level), feeding in the
@@ -546,30 +606,29 @@ mod imp {
             style,
             ..Default::default()
         };
-        // Run the on-device model with the same prompt + per-app formatting.
-        let run_local = || -> Option<anyhow::Result<String>> {
-            LOCAL.get().and_then(|m| {
-                m.lock().unwrap().as_mut().map(|w| {
-                    // System prompt + few-shot demonstration turns + the transcript,
-                    // so the on-device model actually produces newlines/lists and
-                    // resolves self-corrections instead of just being told to.
-                    let messages = whimpr_core::cleanup::build_messages(raw, &ctx);
-                    w.cleanup(&messages)
-                })
-            })
-        };
-        // Selected provider, falling back to local when a cloud key can't be read
-        // (so cleanup still runs) — and Local mode uses the worker directly.
+        // The selected provider, or None when it is not available (no key saved,
+        // local worker not running). Each provider handle is cloned out of its
+        // slot first so the request runs without holding the slot lock.
         let result: Option<anyhow::Result<String>> = match settings.cleanup_mode {
             CleanupMode::OpenAi => OPENAI
                 .get()
-                .and_then(|m| m.lock().unwrap().as_ref().map(|p| p.cleanup(raw, &ctx)))
-                .or_else(run_local),
+                .and_then(|m| m.lock().unwrap().clone())
+                .map(|p| p.cleanup(raw, &ctx)),
             CleanupMode::Anthropic => ANTHROPIC
                 .get()
-                .and_then(|m| m.lock().unwrap().as_ref().map(|p| p.cleanup(raw, &ctx)))
-                .or_else(run_local),
-            CleanupMode::Local => run_local(),
+                .and_then(|m| m.lock().unwrap().clone())
+                .map(|p| p.cleanup(raw, &ctx)),
+            CleanupMode::Local => local_worker().map(|worker| {
+                // System prompt + few-shot demonstration turns + the transcript,
+                // so the on-device model actually produces newlines/lists and
+                // resolves self-corrections instead of just being told to.
+                let messages = whimpr_core::cleanup::build_messages(raw, &ctx);
+                let out = worker.lock().unwrap().cleanup(&messages);
+                if out.is_err() {
+                    respawn_local_worker_if_dead(&worker);
+                }
+                out
+            }),
             CleanupMode::Raw => None,
         };
         match result {
@@ -591,9 +650,9 @@ mod imp {
             }
             None => {
                 if matches!(settings.cleanup_mode, CleanupMode::Local) {
-                    eprintln!("[whimpr] local cleanup model not wired yet — pasting raw");
+                    eprintln!("[whimpr] local cleanup worker not running — pasting raw");
                 } else {
-                    eprintln!("[whimpr] cleanup provider has no API key — pasting raw");
+                    eprintln!("[whimpr] no API key for the selected cleanup provider — pasting raw");
                 }
                 raw_out
             }
@@ -602,6 +661,32 @@ mod imp {
 
     fn now_ms() -> u64 {
         CLOCK.get().map(|c| c.elapsed().as_millis() as u64).unwrap_or(0)
+    }
+
+    /// Take the capture handle for `session` out of the slot. A handle from
+    /// another session is stopped and not returned.
+    ///
+    /// With `wait`, polls for up to a second: the stream can still be starting
+    /// when a hold ends (a mic-permission prompt, a slow device), and reporting
+    /// "no audio" then would lose a real dictation. Only the finalize thread
+    /// waits; a discard runs on the key-tap thread and must return at once (a
+    /// late-arriving handle is stopped by the capture thread's own check).
+    fn take_capture(session: SessionId, wait: bool) -> Option<whimpr_audio::CaptureHandle> {
+        let slot = CAPTURE.get_or_init(|| Mutex::new(None));
+        let tries = if wait { 50 } else { 1 };
+        for i in 0..tries {
+            if let Some((owner, handle)) = slot.lock().unwrap().take() {
+                if owner == session {
+                    return Some(handle);
+                }
+                eprintln!("[whimpr] dropping capture from stale session {owner:?}");
+                let _ = handle.stop();
+            }
+            if i + 1 < tries {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+        None
     }
 
     fn bar_name(b: BarState) -> &'static str {
@@ -616,15 +701,26 @@ mod imp {
         }
     }
 
-    fn emit_bar(app: &AppHandle, state: &'static str) {
+    /// Push a bar state; returns the generation stamp (see `crate::bar_gen`).
+    fn emit_bar(app: &AppHandle, state: &'static str) -> u64 {
         eprintln!("[whimpr] pill -> {state}");
-        // Remembered so the pill's Stop button knows whether it is ending a held
-        // dictation (release) or a hands-free one (which needs a tap).
+        // Remembered so `sync_pill_visibility` can re-show the right state.
         *LAST_BAR.get_or_init(|| Mutex::new("idle")).lock().unwrap() = state;
         // Shared emitter also toggles the overlay window: visible for every
         // state except idle, and re-anchors onto the display the user is
         // actually on when a session starts.
-        crate::emit_flowbar_state(app, state);
+        crate::emit_flowbar_state(app, state)
+    }
+
+    /// Whether the machine is still in `Finalizing` for `session`, i.e. the
+    /// user has not cancelled while the pipeline was running.
+    fn session_still_finalizing(session: SessionId) -> bool {
+        MACHINE.get().is_some_and(|m| {
+            matches!(
+                m.lock().unwrap().state(),
+                whimpr_core::DictationState::Finalizing { session: s } if s == session
+            )
+        })
     }
 
     /// Feed one input into the shared state machine and enact its actions.
@@ -644,19 +740,22 @@ mod imp {
     fn apply_action(app: &AppHandle, action: Action) {
         match action {
             Action::ShowBar(bar) => {
-                emit_bar(app, bar_name(bar));
-                // Let the "done" tick linger briefly before returning to idle.
+                let gen = emit_bar(app, bar_name(bar));
+                // Let the "done" tick linger briefly before returning to idle —
+                // unless something newer (a fresh recording) has been shown since.
                 if bar == BarState::Done {
                     let app2 = app.clone();
                     std::thread::spawn(move || {
                         std::thread::sleep(Duration::from_millis(500));
-                        emit_bar(&app2, "idle");
+                        if crate::bar_gen() == gen {
+                            emit_bar(&app2, "idle");
+                        }
                     });
                 }
             }
             // Start the microphone; stream real RMS bars to the pill waveform.
             // Runs off the tap thread so the mic-permission prompt can't stall keys.
-            Action::StartCapture { .. } => {
+            Action::StartCapture { session, .. } => {
                 let app_thread = app.clone();
                 std::thread::spawn(move || {
                     let app_cb = app_thread.clone();
@@ -669,7 +768,24 @@ mod imp {
                         );
                     }) {
                         Ok(handle) => {
-                            *CAPTURE.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(handle);
+                            // Starting the stream takes long enough that a quick tap
+                            // can have discarded this session already. Only keep the
+                            // handle if the session is still live; otherwise dropping
+                            // it here stops the stream, so the mic never stays open.
+                            let live = MACHINE.get().is_some_and(|m| {
+                                matches!(
+                                    m.lock().unwrap().state(),
+                                    whimpr_core::DictationState::Recording { session: s, .. }
+                                    | whimpr_core::DictationState::Finalizing { session: s }
+                                    if s == session
+                                )
+                            });
+                            if live {
+                                *CAPTURE.get_or_init(|| Mutex::new(None)).lock().unwrap() =
+                                    Some((session, handle));
+                            } else {
+                                eprintln!("[whimpr] capture for discarded session {session:?} stopped");
+                            }
                         }
                         Err(e) => eprintln!("[whimpr] mic capture failed to start: {e}"),
                     }
@@ -678,14 +794,24 @@ mod imp {
             // Stop the mic, transcribe the buffered audio, and advance the machine.
             Action::StopCaptureAndFinalize { session } => {
                 let app2 = app.clone();
-                let handle = CAPTURE.get().and_then(|slot| slot.lock().unwrap().take());
                 std::thread::spawn(move || {
-                    // Whatever happens, return the pill to idle (done -> idle).
-                    let finish =
-                        || handle_input(Input::Pipeline(PipelineEvent::Committed { session }));
+                    // Report back into the machine. Committed shows the done tick;
+                    // Failed goes straight to idle so an error state already on the
+                    // pill stays visible. A session the user cancelled meanwhile is
+                    // ignored by the machine either way.
+                    let finish = |ok: bool| {
+                        let at_ms = now_ms();
+                        let ev = if ok {
+                            PipelineEvent::Committed { session, at_ms }
+                        } else {
+                            PipelineEvent::Failed { session, at_ms }
+                        };
+                        handle_input(Input::Pipeline(ev));
+                    };
+                    let handle = take_capture(session, true);
                     let Some(res) = handle.and_then(|h| h.stop()) else {
                         eprintln!("[whimpr] no audio captured");
-                        finish();
+                        finish(false);
                         return;
                     };
                     let peak = res.samples.iter().fold(0f32, |m, &s| m.max(s.abs()));
@@ -713,7 +839,7 @@ mod imp {
                                 whimpr_core::InjectionFailure::NoAudioCaptured,
                             );
                         }
-                        finish();
+                        finish(false);
                         return;
                     }
                     let asr = ASR.get().and_then(|m| m.lock().unwrap().clone());
@@ -722,7 +848,7 @@ mod imp {
                         if was_real_attempt && ASR_MODEL_MISSING.load(Ordering::SeqCst) {
                             crate::diag::report(&app2, whimpr_core::InjectionFailure::AsrUnavailable);
                         }
-                        finish();
+                        finish(false);
                         return;
                     };
                     let pcm = whimpr_audio::resample_to_16k(&res.samples, res.sample_rate);
@@ -736,6 +862,12 @@ mod imp {
                                 eprintln!("[whimpr] CLEANED:   \"{}\"", text);
                             }
 
+                            // The user may have hit ✕ while ASR/cleanup ran. Pasting
+                            // now would drop the text into whatever they focused since.
+                            if !session_still_finalizing(session) {
+                                eprintln!("[whimpr] session cancelled during transcription — not pasting");
+                                return;
+                            }
                             if !text.is_empty() {
                                 if let Err(e) = crate::paste::paste_text(&text) {
                                     eprintln!("[whimpr] paste failed: {e}");
@@ -747,7 +879,7 @@ mod imp {
                                     crate::diag::report(&app2, failure);
                                     // Don't play success chime or log to history on a
                                     // failed paste: the text never reached the cursor.
-                                    finish();
+                                    finish(false);
                                     return;
                                 }
                                 crate::diag::clear_last_error();
@@ -757,27 +889,27 @@ mod imp {
                             } else if was_real_attempt {
                                 crate::diag::report(&app2, whimpr_core::InjectionFailure::EmptyTranscript);
                             }
+                            let ok = !text.is_empty();
                             let _ = app2.emit_to(
                                 OVERLAY_LABEL,
                                 "whimpr://transcript",
                                 TranscriptPayload { text },
                             );
+                            finish(ok);
                         }
                         Err(e) => {
                             eprintln!("[whimpr] ASR error: {e}");
                             if was_real_attempt {
                                 crate::diag::report(&app2, whimpr_core::InjectionFailure::AsrUnavailable);
                             }
+                            finish(false);
                         }
                     }
-                    finish();
                 });
             }
-            Action::DiscardCapture { .. } => {
-                if let Some(slot) = CAPTURE.get() {
-                    if let Some(handle) = slot.lock().unwrap().take() {
-                        let _ = handle.stop();
-                    }
+            Action::DiscardCapture { session } => {
+                if let Some(handle) = take_capture(session, false) {
+                    let _ = handle.stop();
                 }
                 play_cue(Cue::Cancel);
             }
@@ -993,9 +1125,9 @@ mod imp {
 #[cfg(target_os = "macos")]
 pub use imp::{
     current_settings, dictionary_add, dictionary_entries, dictionary_learn,
-    dictionary_remove, history, install, last_bar, mark_tap_stale, rebuild_asr,
-    rebuild_providers, stats_summary, tap_live,
-    trigger_hands_free, ui_cancel, ui_start, ui_stop, update_settings,
+    dictionary_remove, history, install, last_bar, mark_tap_stale, model_path, models_dir,
+    read_anthropic_key, read_openai_key, rebuild_asr, rebuild_providers, stats_summary,
+    tap_live, trigger_hands_free, ui_cancel, ui_start, ui_stop, update_settings,
 };
 
 // Windows uses the real (but unverified) platform layer in `crate::win`.
@@ -1039,11 +1171,23 @@ mod other {
     pub fn last_bar() -> &'static str {
         "idle"
     }
+    pub fn models_dir() -> std::path::PathBuf {
+        std::path::PathBuf::new()
+    }
+    pub fn model_path() -> std::path::PathBuf {
+        std::path::PathBuf::new()
+    }
+    pub fn read_openai_key() -> Option<String> {
+        None
+    }
+    pub fn read_anthropic_key() -> Option<String> {
+        None
+    }
 }
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub use other::{
     current_settings, dictionary_add, dictionary_entries, dictionary_learn,
-    dictionary_remove, history, install, last_bar, mark_tap_stale, rebuild_asr,
-    rebuild_providers, stats_summary, tap_live,
-    trigger_hands_free, ui_cancel, ui_start, ui_stop, update_settings,
+    dictionary_remove, history, install, last_bar, mark_tap_stale, model_path, models_dir,
+    read_anthropic_key, read_openai_key, rebuild_asr, rebuild_providers, stats_summary,
+    tap_live, trigger_hands_free, ui_cancel, ui_start, ui_stop, update_settings,
 };

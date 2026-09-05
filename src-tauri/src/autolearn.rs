@@ -119,7 +119,8 @@ mod imp {
     struct SendPtr(AXUIElementRef);
     unsafe impl Send for SendPtr {}
 
-    /// Right after paste, snapshot the focused field, then check it once after a
+    /// Right after paste, snapshot the focused field (which now contains the
+    /// pasted text plus whatever was already there), then check it once after a
     /// short delay for a one-word correction to learn.
     pub fn watch_correction(inserted: &str) {
         // Reads require Accessibility; also skip trivial dictations.
@@ -131,6 +132,13 @@ mod imp {
         if focused.is_null() {
             return;
         }
+        // The whole field as it stands after the paste. Diffing against THIS,
+        // not against the inserted text alone, is what lets a correction be
+        // seen in a document that already had other words in it.
+        let Some(before) = (unsafe { element_value(focused) }) else {
+            unsafe { CFRelease(focused) };
+            return;
+        };
         let holder = SendPtr(focused);
         std::thread::spawn(move || {
             // Force whole-struct capture (2021 disjoint captures would otherwise grab
@@ -140,7 +148,7 @@ mod imp {
             let after = unsafe { element_value(holder.0) };
             unsafe { CFRelease(holder.0) };
             let Some(after) = after else { return };
-            if let Some((mishear, correct)) = super::detect_correction(&inserted, &after) {
+            if let Some((mishear, correct)) = super::detect_correction(&inserted, &before, &after) {
                 eprintln!("[whimpr] ✨ auto-learned: \"{mishear}\" -> \"{correct}\"");
                 crate::hotkey::dictionary_learn(correct, vec![mishear]);
             }
@@ -177,26 +185,31 @@ const COMMON: &[&str] = &[
     "yeah", "hey", "hello", "please", "thanks", "thank", "message", "email", "text", "call",
 ];
 
-/// Detect a single clean one-word correction: exactly one word removed from the
-/// inserted text and one word added in the field, both distinctive and phonetically
-/// close, with the new word looking like a proper noun. Returns `(mishear, correct)`.
-pub fn detect_correction(inserted: &str, after: &str) -> Option<(String, String)> {
+/// Detect a single clean one-word correction: exactly one word of the field
+/// changed between `before` (the field right after paste) and `after`, that
+/// word came from the `inserted` dictation, and the replacement is distinctive,
+/// phonetically close, and looks like a proper noun. Returns `(mishear, correct)`.
+pub fn detect_correction(inserted: &str, before: &str, after: &str) -> Option<(String, String)> {
     use std::collections::HashSet;
-    let ins = word_tokens(inserted);
+    let bef = word_tokens(before);
     let aft = word_tokens(after);
-    if ins.is_empty() || aft.is_empty() {
+    if bef.is_empty() || aft.is_empty() {
         return None;
     }
-    let ins_lc: HashSet<String> = ins.iter().map(|w| w.to_lowercase()).collect();
+    let bef_lc: HashSet<String> = bef.iter().map(|w| w.to_lowercase()).collect();
     let aft_lc: HashSet<String> = aft.iter().map(|w| w.to_lowercase()).collect();
 
-    let removed: Vec<&String> = ins.iter().filter(|w| !aft_lc.contains(&w.to_lowercase())).collect();
-    let added: Vec<&String> = aft.iter().filter(|w| !ins_lc.contains(&w.to_lowercase())).collect();
+    let removed: Vec<&String> = bef.iter().filter(|w| !aft_lc.contains(&w.to_lowercase())).collect();
+    let added: Vec<&String> = aft.iter().filter(|w| !bef_lc.contains(&w.to_lowercase())).collect();
     if removed.len() != 1 || added.len() != 1 {
         return None; // only learn on a clean 1-for-1 swap
     }
     let mishear = removed[0].clone();
     let correct = added[0].clone();
+    // Only learn corrections to what WE typed, not edits elsewhere in the document.
+    if !word_tokens(inserted).iter().any(|w| w.eq_ignore_ascii_case(&mishear)) {
+        return None;
+    }
 
     let alpha = |w: &str| w.chars().all(|c| c.is_alphabetic());
     if mishear.chars().count() < 3 || correct.chars().count() < 3 {
@@ -243,33 +256,61 @@ fn norm_levenshtein(a: &str, b: &str) -> f32 {
 mod tests {
     use super::*;
 
+    /// Empty field: what was pasted is the whole field.
+    fn empty_field(inserted: &str, after: &str) -> Option<(String, String)> {
+        detect_correction(inserted, inserted, after)
+    }
+
     #[test]
     fn learns_a_name_correction() {
         // We inserted "monvi"; the user fixed it to "Manvi".
-        let got = detect_correction("send the deck to monvi please", "send the deck to Manvi please");
+        let got = empty_field("send the deck to monvi please", "send the deck to Manvi please");
         assert_eq!(got, Some(("monvi".to_string(), "Manvi".to_string())));
+    }
+
+    #[test]
+    fn learns_inside_a_document_that_already_had_text() {
+        // The paste landed after two existing sentences; those words must not
+        // count as "added" (which used to make this feature dead outside an
+        // empty field).
+        let inserted = "send the deck to monvi please";
+        let before = "Notes from today. Budget is approved. send the deck to monvi please";
+        let after = "Notes from today. Budget is approved. send the deck to Manvi please";
+        assert_eq!(
+            detect_correction(inserted, before, after),
+            Some(("monvi".to_string(), "Manvi".to_string()))
+        );
+    }
+
+    #[test]
+    fn ignores_an_edit_elsewhere_in_the_document() {
+        // A name fixed in a sentence we did NOT dictate is not our mishear.
+        let inserted = "send the deck please";
+        let before = "call monvi tomorrow. send the deck please";
+        let after = "call Manvi tomorrow. send the deck please";
+        assert_eq!(detect_correction(inserted, before, after), None);
     }
 
     #[test]
     fn ignores_common_word_edits() {
         // "there" -> "their" is a common-word edit, never learned.
-        assert_eq!(detect_correction("i left there bag", "i left their bag"), None);
+        assert_eq!(empty_field("i left there bag", "i left their bag"), None);
     }
 
     #[test]
     fn ignores_multi_word_changes() {
         // More than one word changed → too ambiguous, skip.
-        assert_eq!(detect_correction("meet at noon monvi", "see you later Manvi"), None);
+        assert_eq!(empty_field("meet at noon monvi", "see you later Manvi"), None);
     }
 
     #[test]
     fn ignores_unrelated_replacement() {
         // Not phonetically close → not a mishear.
-        assert_eq!(detect_correction("ping the server foo", "ping the server Xylophone"), None);
+        assert_eq!(empty_field("ping the server foo", "ping the server Xylophone"), None);
     }
 
     #[test]
     fn no_change_learns_nothing() {
-        assert_eq!(detect_correction("hello there world", "hello there world"), None);
+        assert_eq!(empty_field("hello there world", "hello there world"), None);
     }
 }
