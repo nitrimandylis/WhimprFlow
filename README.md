@@ -64,6 +64,10 @@ Download a Whisper model into `~/Library/Application Support/WhimprFlow/models/`
 
 First launch will ask for Accessibility and Microphone permissions. Grant both, hold Fn, talk.
 
+If double-tapping Fn opens Apple's own Dictation instead of locking a hands-free session, turn that shortcut off: System Settings → Keyboard → Dictation → Shortcut → Off, and set "Press 🌐 key to" → Do Nothing.
+
+**What stays on disk.** Settings, your dictionary, and usage stats live in `~/Library/Application Support/WhimprFlow/`. The text of your last 500 dictations is kept there too for the Hub's history list; turn that off in Settings → History if you would rather keep only the word counts. API keys go in the macOS keychain, never in a file.
+
 ## 🔩 Under the hood
 
 ```mermaid

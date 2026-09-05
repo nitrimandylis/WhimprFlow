@@ -98,12 +98,20 @@ export APPLE_SIGNING_IDENTITY="$IDENTITY"
 BUILD_ARGS=(build)
 [ -n "$TARGET" ] && BUILD_ARGS+=(--target "$TARGET")
 
-# The worker is NOT an externalBin (tauri-build demands a triple-suffixed file
-# name that breaks dev builds); instead, drop it next to the app executable —
-# `worker_bin_path()` checks that location first — sign it, and re-seal the
-# bundle so Gatekeeper/notarization stay intact.
+# The worker is declared as an externalBin in tauri.conf.json, so Tauri copies
+# it into Contents/MacOS/, signs it with the app, and seals the bundle — the
+# same path CI takes. It just has to be staged under the triple-suffixed name
+# tauri-build looks for. `worker_bin_path()` finds it next to the executable.
 echo "==> Building the local-LLM worker…"
-cargo build --release -p whimpr-llm-worker
+HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
+WORKER_TRIPLE="${TARGET:-$HOST_TRIPLE}"
+WORKER_BUILD=(cargo build --release -p whimpr-llm-worker)
+[ -n "$TARGET" ] && WORKER_BUILD+=(--target "$TARGET")
+"${WORKER_BUILD[@]}"
+WORKER_SRC="$REPO_ROOT/target/release/whimpr-llm-worker"
+[ -n "$TARGET" ] && WORKER_SRC="$REPO_ROOT/target/$TARGET/release/whimpr-llm-worker"
+mkdir -p "$REPO_ROOT/src-tauri/binaries"
+cp "$WORKER_SRC" "$REPO_ROOT/src-tauri/binaries/whimpr-llm-worker-$WORKER_TRIPLE"
 
 cd "$REPO_ROOT/src-tauri"
 "$TAURI" "${BUILD_ARGS[@]}"
@@ -112,12 +120,9 @@ TARGET_DIR="$REPO_ROOT/target"
 [ -n "$TARGET" ] && TARGET_DIR="$TARGET_DIR/$TARGET"
 APP="$TARGET_DIR/release/bundle/macos/WhimprFlow.app"
 DMG="$(/usr/bin/find "$TARGET_DIR/release/bundle/dmg" -name "*.dmg" -print -quit 2>/dev/null || true)"
-WORKER_DEST="$APP/Contents/MacOS/whimpr-llm-worker"
-cp "$REPO_ROOT/target/release/whimpr-llm-worker" "$WORKER_DEST"
-codesign --force --sign "$IDENTITY" "$WORKER_DEST"
-codesign --force --sign "$IDENTITY" "$APP"
 
 [ -d "$APP" ] || { echo "No WhimprFlow.app was produced." >&2; exit 1; }
+[ -x "$APP/Contents/MacOS/whimpr-llm-worker" ] || { echo "The worker sidecar is missing from the bundle." >&2; exit 1; }
 
 if [ "$NOTARIZE" = "1" ]; then
   # The app first. Submitting it on its own means its ticket exists before the
