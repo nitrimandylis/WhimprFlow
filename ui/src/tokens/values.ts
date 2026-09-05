@@ -43,7 +43,7 @@ export const pillFill = {
 } as const;
 
 export const geometry = {
-  morphMs: 420,
+  morphMs: 220,
 } as const;
 
 export const font = {

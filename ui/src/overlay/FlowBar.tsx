@@ -105,6 +105,7 @@ function CancelButton() {
   return (
     <div
       title="Cancel (Esc)"
+      className="pill-btn"
       {...buttonHandlers(() => void pillCommand("pill_cancel"))}
       style={{
         cursor: "pointer",
@@ -130,6 +131,7 @@ function StopButton() {
   return (
     <div
       title="Stop and insert"
+      className="pill-btn"
       {...buttonHandlers(() => void pillCommand("pill_stop"))}
       style={{
         cursor: "pointer",
@@ -224,7 +226,7 @@ function Chip({
   maxWidth?: number;
 }) {
   return (
-    <label title={title} style={chipStyle}>
+    <label title={title} className="qc-chip" style={chipStyle}>
       <span style={{ display: "flex", flex: "0 0 auto" }}>{icon}</span>
       <span style={{ overflow: "hidden", textOverflow: "ellipsis", maxWidth }}>{text}</span>
       <select
@@ -317,6 +319,7 @@ function QuickControls({ settings, onChange }: { settings: Settings; onChange: (
       />
       <div
         title="Open settings"
+        className="qc-chip"
         {...buttonHandlers(() => void invokeSafe("open_hub_settings"))}
         style={{ ...chipStyle, width: 30, padding: 0, justifyContent: "center" }}
       >
@@ -448,6 +451,7 @@ export function FlowBar() {
         {isIdle ? (
           hover ? (
             <div
+              className="pill-label"
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -493,4 +497,4 @@ export function FlowBar() {
   );
 }
 
-const motionEase = "cubic-bezier(0.05,0.6,0.4,0.95)";
+const motionEase = "cubic-bezier(0.23, 1, 0.32, 1)";
