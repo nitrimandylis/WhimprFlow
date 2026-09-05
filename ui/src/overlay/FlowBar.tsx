@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { palette, pillFill, geometry, font } from "../tokens/values";
-import type { PartialTranscriptEvent, ReceiptEvent } from "../hub/api";
 
 // Visual states, mirroring the Rust `BarState`.
 export type BarState =
@@ -16,25 +15,6 @@ type StateEvent = { state: BarState };
 type WaveformEvent = { bars: number[] };
 // Mirrors `diag::ErrorDto` in src-tauri/src/diag.rs.
 type ErrorEvent = { headline: string; detail: string };
-
-// How long the insertion receipt stays on screen after a finalize.
-const RECEIPT_MS = 1600;
-
-// One line of receipt copy per action (spec: whimpr://receipt).
-function receiptText(p: ReceiptEvent): string {
-  switch (p.action) {
-    case "pasted":
-      return `Pasted - ${p.words} ${p.words === 1 ? "word" : "words"}`;
-    case "noted":
-      return "Saved to Studio notes";
-    case "clipboard":
-      return "Copied to clipboard";
-    case "pending":
-      return "Awaiting approval";
-    case "error":
-      return p.message ?? "Something's off";
-  }
-}
 
 async function tauriListen<T>(event: string, cb: (payload: T) => void): Promise<() => void> {
   try {
@@ -223,9 +203,6 @@ export function FlowBar() {
   const [state, setState] = useState<BarState>("idle");
   const [bars, setBars] = useState<number[]>([]);
   const [errorText, setErrorText] = useState<ErrorEvent | null>(null);
-  const [partial, setPartial] = useState("");
-  const [receipt, setReceipt] = useState<string | null>(null);
-  const receiptTimer = useRef<number | undefined>(undefined);
   // Driven by Rust cursor tracking (whimpr://hover). Rust also toggles
   // ignoresMouseEvents so buttons are clickable while hovering.
   const [hover, setHover] = useState(false);
@@ -260,58 +237,37 @@ export function FlowBar() {
     let un2: (() => void) | undefined;
     let un3: (() => void) | undefined;
     let un4: (() => void) | undefined;
-    let un5: (() => void) | undefined;
-    let un6: (() => void) | undefined;
-    tauriListen<StateEvent>("whimpr://flowbar/state", (p) => {
-      setState(p.state);
-      if (p.state === "recording") {
-        setPartial("");
-        setReceipt(null);
-      }
-    }).then((u) => (un1 = u));
+    tauriListen<StateEvent>("whimpr://flowbar/state", (p) => setState(p.state)).then((u) => (un1 = u));
     tauriListen<WaveformEvent>("whimpr://audio/waveform", (p) => setBars(p.bars)).then((u) => (un2 = u));
     tauriListen<ErrorEvent>("whimpr://error", (p) => setErrorText(p)).then((u) => (un3 = u));
-    tauriListen<PartialTranscriptEvent>("whimpr://transcript/partial", (p) => setPartial(p.text)).then(
-      (u) => (un4 = u),
-    );
-    tauriListen<ReceiptEvent>("whimpr://receipt", (p) => {
-      setReceipt(receiptText(p));
-      window.clearTimeout(receiptTimer.current);
-      receiptTimer.current = window.setTimeout(() => setReceipt(null), RECEIPT_MS);
-    }).then((u) => (un5 = u));
-    tauriListen<boolean>("whimpr://hover", (over) => setHover(over)).then((u) => (un6 = u));
+    tauriListen<boolean>("whimpr://hover", (over) => setHover(over)).then((u) => (un4 = u));
     return () => {
       un1?.();
       un2?.();
       un3?.();
       un4?.();
-      un5?.();
-      un6?.();
-      window.clearTimeout(receiptTimer.current);
     };
   }, []);
 
   const recording = state === "recording" || state === "locked";
-  const isIdle = state === "idle" && receipt === null;
+  const isIdle = state === "idle";
   const processing = state === "transcribing";
   const isError = state === "error";
   const statusText =
     state === "transcribing"
       ? "Cleaning up…"
-      : (receipt ??
-        (isError
-          ? errorText?.headline ?? "Something's off"
-          : state === "cancelled"
-            ? "Discarded"
-            : "Done"));
+      : isError
+        ? errorText?.headline ?? "Something's off"
+        : state === "cancelled"
+          ? "Discarded"
+          : "Done";
 
-  const showPartial = recording && partial.length > 0;
   const dims = isIdle
     ? hover
       ? { w: 158, h: 38 }
       : { w: 76, h: 16 }
     : recording
-      ? { w: 250, h: showPartial ? 62 : 44 }
+      ? { w: 250, h: 44 }
       : isError
         ? { w: 280, h: 36 }
         : { w: 180, h: 36 };
@@ -390,21 +346,6 @@ export function FlowBar() {
               </div>
               <StopButton />
             </div>
-            {showPartial && (
-              <div
-                style={{
-                  fontSize: 11.5,
-                  lineHeight: 1.3,
-                  color: palette.pillTextMuted,
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  padding: "0 6px 4px",
-                }}
-              >
-                {partial}
-              </div>
-            )}
           </div>
         ) : processing ? (
           <span style={{ color: palette.pillTextMuted }}>{statusText}</span>

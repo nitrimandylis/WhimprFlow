@@ -21,7 +21,7 @@ import {
 
 const ASR_MODES: { value: AsrMode; label: string; hint: string }[] = [
   { value: "local", label: "Local", hint: "On-device Whisper (offline, needs a model file in %APPDATA%\\WhimprFlow\\models\\)" },
-  { value: "cloud", label: "Cloud", hint: "Fast cloud transcription via OpenAI or an OpenAI-compatible API like Groq — reuses the OpenAI API key below." },
+  { value: "cloud", label: "Cloud", hint: "Fast cloud transcription via OpenAI or an OpenAI-compatible API like Groq. Uses the cloud ASR key below, or the OpenAI key if none is set." },
 ];
 
 const selectStyle: React.CSSProperties = {
@@ -380,6 +380,16 @@ export function SettingsPane({
             </div>
           </div>
         )}
+        {settings.asr_mode === "cloud" && (
+          <KeyField
+            label="Cloud ASR API key (e.g. Groq)"
+            configured={status.has_asr_key}
+            onSave={async (k) => {
+              await setApiKey("asr", k);
+              setTimeout(refresh, 400);
+            }}
+          />
+        )}
       </Card>
 
       <Card style={{ marginBottom: 16 }}>
@@ -519,7 +529,7 @@ export function SettingsPane({
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <Row
             title="Push-to-talk key"
-            hint="Hold this key to dictate. Only modifier keys can be used — they are the ones the key tap can see without intercepting your typing."
+            hint="Hold this key to dictate; double-tap it for hands-free. Only modifier keys can be used — they are the ones the key tap can see without intercepting your typing. If double-tapping Fn opens Apple Dictation instead, set System Settings → Keyboard → Dictation shortcut to Off and “Press 🌐 key to” to Do Nothing."
           >
             <select
               value={settings.push_to_talk_key}
@@ -591,6 +601,19 @@ export function SettingsPane({
               ]}
               value={settings.show_in_dock ? "on" : "off"}
               onChange={(v) => onChange({ ...settings, show_in_dock: v === "on" })}
+            />
+          </Row>
+          <Row
+            title="Keep dictation history"
+            hint="Stores the text of your last 500 dictations on this Mac for the Home history list. Off keeps only word counts and timing."
+          >
+            <Segmented
+              options={[
+                { value: "on", label: "On" },
+                { value: "off", label: "Off" },
+              ]}
+              value={settings.save_history ? "on" : "off"}
+              onChange={(v) => onChange({ ...settings, save_history: v === "on" })}
             />
           </Row>
         </div>

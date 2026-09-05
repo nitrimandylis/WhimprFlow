@@ -1,13 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { font, palette } from "../tokens/values";
+import { font } from "../tokens/values";
 import { theme } from "./theme";
 import { useStats } from "./ui";
 import { Icon } from "./icons";
-import {
-  getHistory,
-  type HistoryItem,
-  type Provenance,
-} from "./api";
+import { getHistory, type HistoryItem } from "./api";
 import { dayKey, dayLabel, fmtDuration, fmtNum, fmtTimeOfDay } from "./format";
 import { gsap, prefersReduced, scrollerEl, EASE, EASE_EXPO } from "./anim";
 import { detectPlatformSync } from "./platform";
@@ -137,58 +133,7 @@ function Kbd({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ── Provenance badge ──────────────────────────────────────────────────────────
-// Maps whimpr-core's Provenance.cleanup route to a short badge label.
-function provenanceLabel(cleanup: string): string | null {
-  if (!cleanup) return null; // pre-provenance history entries
-  if (cleanup === "raw") return "Raw";
-  if (cleanup === "local") return "Local";
-  if (cleanup.startsWith("openai:")) return "OpenAI";
-  if (cleanup.startsWith("anthropic:")) return "Anthropic";
-  if (cleanup === "snippet") return "Snippet";
-  if (cleanup.startsWith("workflow:")) return "Workflow";
-  return cleanup; // unknown routes render verbatim rather than hiding
-}
-
-const BADGE_STYLE: React.CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 4,
-  fontSize: 10.5,
-  fontWeight: 600,
-  letterSpacing: 0.4,
-  textTransform: "uppercase",
-  borderRadius: 999,
-  padding: "2px 8px",
-};
-
-function ProvenanceBadge({ p }: { p?: Provenance }) {
-  if (!p) return null;
-  const label = provenanceLabel(p.cleanup);
-  if (!label) return null;
-  return (
-    <>
-      <span style={{ ...BADGE_STYLE, color: theme.textMuted, background: theme.cardBgSubtle, border: `1px solid ${theme.border}` }}>
-        {label}
-        {p.sent_to_cloud && (
-          <span role="img" aria-label="Sent to cloud" title="Sent to cloud" style={{ display: "inline-flex" }}>
-            <Icon name="cloud" size={11} style={{ color: theme.textFaint }} />
-          </span>
-        )}
-      </span>
-      {p.gate === "rejected" && (
-        <span style={{ ...BADGE_STYLE, color: palette.error, background: "rgba(255,107,107,0.10)", border: "1px solid rgba(255,107,107,0.35)" }}>
-          Gate rejected
-        </span>
-      )}
-    </>
-  );
-}
-
 // ── History row ───────────────────────────────────────────────────────────────
-// ponytail: raw-vs-final diff, low-confidence word highlighting, and the
-// confidence/low_words receipt fields were dropped — none of it is populated
-// by the real backend's HistoryItem (ts_unix/text/app/words only).
 function HistoryRow({ it }: { it: HistoryItem }) {
   return (
     <div style={{ display: "flex", gap: 14, padding: "11px 4px", borderBottom: `1px solid ${theme.border}` }}>
@@ -197,10 +142,9 @@ function HistoryRow({ it }: { it: HistoryItem }) {
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13.5, lineHeight: 1.5, color: theme.textBody }}>{it.text}</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
-          {it.app && <span style={{ fontSize: 11, color: theme.textFaint }}>{it.app}</span>}
-          <ProvenanceBadge p={it.provenance} />
-        </div>
+        {it.app && (
+          <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 4 }}>{it.app}</div>
+        )}
       </div>
     </div>
   );

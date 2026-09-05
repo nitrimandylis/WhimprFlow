@@ -43,6 +43,9 @@ export interface Settings {
   microphone: string;
   // Free-text style preferences appended to the cleanup prompt.
   style_instructions: string;
+  // Keep the text of each dictation for the Hub history list (last 500).
+  // Off keeps only word counts and timing for the stats.
+  save_history: boolean;
 }
 
 export type PushToTalkKey = "fn" | "right_command" | "right_option" | "right_control";
@@ -103,6 +106,8 @@ export interface Status {
   hotkey_wired: boolean;
   has_openai_key: boolean;
   has_anthropic_key: boolean;
+  // A key saved just for cloud ASR (e.g. Groq). Absent = falls back to the OpenAI key.
+  has_asr_key: boolean;
 }
 
 // What the Hub falls back to before the first read lands (and in a plain
@@ -117,6 +122,7 @@ export const UNKNOWN_STATUS: Status = {
   hotkey_wired: false,
   has_openai_key: false,
   has_anthropic_key: false,
+  has_asr_key: false,
 };
 
 export interface StatsSummary {
@@ -166,6 +172,7 @@ export const DEFAULT_SETTINGS: Settings = {
   show_in_dock: true,
   microphone: "",
   style_instructions: "",
+  save_history: true,
 };
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -286,32 +293,17 @@ export async function requestInputMonitoring(): Promise<void> {
 // Unlike the other wrappers, this one does NOT swallow errors — saving a key is
 // an explicit user action and a silent failure here (e.g. no OS credential store
 // available) should surface, not look like a successful save.
-export async function setApiKey(provider: "openai" | "anthropic", key: string): Promise<void> {
+export async function setApiKey(provider: "openai" | "anthropic" | "asr", key: string): Promise<void> {
   await invoke<void>("set_api_key", { provider, key });
 }
 
 // ── History ────────────────────────────────────────────────────────────────
-// Mirrors whimpr-core's Provenance: where a dictation's text came from.
-export interface Provenance {
-  // ASR engine + model, e.g. "whisper.cpp:ggml-base.en.bin".
-  asr_engine: string;
-  // "raw" | "local" | "openai:<model>" | "anthropic:<model>"
-  cleanup: string;
-  sent_to_cloud: boolean;
-  gate: "passed" | "rejected" | "skipped" | string;
-}
-
+// Mirrors whimpr-core's HistoryItem exactly: the backend sends nothing else.
 export interface HistoryItem {
   ts_unix: number;
   text: string;
   app: string | null;
   words: number;
-  // Raw (pre-cleanup) transcript, for the raw-vs-final diff view. Optional —
-  // older backend builds don't send it.
-  raw?: string;
-  provenance?: Provenance;
-  confidence?: number | null;
-  low_words?: string[];
 }
 
 export async function getHistory(limit?: number): Promise<HistoryItem[]> {
@@ -443,29 +435,6 @@ export async function getBuildInfo(): Promise<BuildInfo> {
 }
 
 // ── Shell events ─────────────────────────────────────────────────────────────
-// Mirrors src-tauri's payload structs. The overlay pill and the Hub both
-// subscribe to these.
-export const EVENT_TRANSCRIPT_PARTIAL = "whimpr://transcript/partial";
-export const EVENT_RECEIPT = "whimpr://receipt";
-
-// Live provisional text while recording (streaming preview).
-export interface PartialTranscriptEvent {
-  text: string;
-}
-
-export type ReceiptAction = "pasted" | "noted" | "clipboard" | "pending" | "error";
-
-// The insertion receipt emitted after every finalize.
-export interface ReceiptEvent {
-  ok: boolean;
-  action: ReceiptAction;
-  app: string | null;
-  words: number;
-  confidence: number | null;
-  low_words: string[];
-  message: string | null;
-}
-
 // Subscribe to a shell event. In a plain browser the event import fails and
 // the returned unsubscribe is a no-op (same fallback pattern as invoke).
 export async function listenEvent<T>(event: string, cb: (payload: T) => void): Promise<() => void> {
@@ -475,13 +444,5 @@ export async function listenEvent<T>(event: string, cb: (payload: T) => void): P
   } catch {
     return () => {};
   }
-}
-
-export function onTranscriptPartial(cb: (p: PartialTranscriptEvent) => void): Promise<() => void> {
-  return listenEvent<PartialTranscriptEvent>(EVENT_TRANSCRIPT_PARTIAL, cb);
-}
-
-export function onReceipt(cb: (p: ReceiptEvent) => void): Promise<() => void> {
-  return listenEvent<ReceiptEvent>(EVENT_RECEIPT, cb);
 }
 
