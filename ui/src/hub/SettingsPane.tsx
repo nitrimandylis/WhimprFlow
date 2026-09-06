@@ -3,6 +3,8 @@ import { Button, Group, GroupTitle, Note, PageHeader, Row, Select, Status, Switc
 import {
   LANGUAGES,
   listMicrophones,
+  listModels,
+  type ModelInfo,
   PTT_KEYS,
   requestAccessibility,
   requestInputMonitoring,
@@ -172,10 +174,20 @@ export function SettingsPane({
   refresh: () => void;
 }) {
   const [mics, setMics] = useState<string[]>([]);
+  const [models, setModels] = useState<ModelInfo[]>([]);
   useEffect(() => {
     void listMicrophones().then(setMics);
+    void listModels().then(setModels);
   }, []);
   const micOptions = [{ value: "", label: "System default" }, ...mics.map((m) => ({ value: m, label: m }))];
+  const installedModels = models.filter((m) => m.installed);
+  const modelOptions = [
+    { value: "", label: "Auto (best installed)" },
+    ...installedModels.map((m) => ({
+      value: m.name,
+      label: `${m.label} (${m.size_mb >= 1000 ? `${(m.size_mb / 1000).toFixed(1)} GB` : `${m.size_mb} MB`})`,
+    })),
+  ];
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => onChange({ ...settings, [k]: v });
 
   return (
@@ -207,6 +219,11 @@ export function SettingsPane({
             <Row label="Engine" hint={settings.asr_mode === "local" ? "Whisper runs on this Mac. Works offline." : "An OpenAI-compatible transcription API, such as Groq."}>
               <Select label="Speech engine" value={settings.asr_mode} options={ASR_MODES} onChange={(v) => set("asr_mode", v)} />
             </Row>
+            {settings.asr_mode === "local" && installedModels.length > 0 && (
+              <Row label="Model" hint="Which Whisper model to use for transcription.">
+                <Select label="Whisper model" value={settings.whisper_model} options={modelOptions} onChange={(v) => set("whisper_model", v)} />
+              </Row>
+            )}
             {settings.asr_mode === "cloud" && (
               <>
                 <Row label="Server" hint="Leave blank for OpenAI.">
