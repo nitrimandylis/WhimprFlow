@@ -852,6 +852,15 @@ fn list_models() -> Vec<ModelInfo> {
     models
 }
 
+/// Open the models folder in Finder so the user can add their own .bin files.
+#[tauri::command]
+fn open_models_folder() {
+    let dir = hotkey::models_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    #[cfg(target_os = "macos")]
+    { let _ = std::process::Command::new("open").arg(&dir).spawn(); }
+}
+
 /// Whether any speech model exists on disk.
 #[tauri::command]
 fn check_model_status() -> bool {
@@ -1207,6 +1216,7 @@ pub fn run() {
             list_models,
             check_model_status,
             download_model,
+            open_models_folder,
             get_dictionary,
             add_dictionary_entry,
             remove_dictionary_entry,
@@ -1291,7 +1301,7 @@ pub fn run() {
 
             let mut tray = TrayIconBuilder::new()
                 .menu(&menu)
-                .show_menu_on_left_click(false)
+                .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => show_hub(app),
                     "demo_rec" => {

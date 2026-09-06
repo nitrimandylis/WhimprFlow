@@ -4,6 +4,10 @@ import {
   LANGUAGES,
   listMicrophones,
   listModels,
+  downloadModel,
+  onModelProgress,
+  onModelDone,
+  openModelsFolder,
   type ModelInfo,
   PTT_KEYS,
   requestAccessibility,
@@ -162,6 +166,61 @@ function PermRow({ ok, label, detail, onClick }: { ok: boolean; label: string; d
   );
 }
 
+function ModelDownloadButton({ models, onDone }: { models: ModelInfo[]; onDone: () => void }) {
+  const [selected, setSelected] = useState("");
+  const [downloading, setDownloading] = useState(false);
+  const [percent, setPercent] = useState(0);
+
+  useEffect(() => {
+    if (!downloading) return;
+    let s1: (() => void) | undefined;
+    let s2: (() => void) | undefined;
+    void onModelProgress((p) => setPercent(p.percent)).then((u) => (s1 = u));
+    void onModelDone((p) => {
+      setDownloading(false);
+      if (p.ok) onDone();
+    }).then((u) => (s2 = u));
+    return () => { s1?.(); s2?.(); };
+  }, [downloading, onDone]);
+
+  const notInstalled = models.filter((m) => !m.installed);
+  if (notInstalled.length === 0 && !downloading) return null;
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      {!downloading && (
+        <select
+          value={selected}
+          onChange={(e) => setSelected(e.target.value)}
+          style={{ fontSize: 13, borderRadius: 6, padding: "3px 6px" }}
+        >
+          <option value="">Download a model</option>
+          {notInstalled.map((m) => (
+            <option key={m.name} value={m.name}>
+              {m.label} ({m.size_mb >= 1000 ? `${(m.size_mb / 1000).toFixed(1)} GB` : `${m.size_mb} MB`})
+            </option>
+          ))}
+        </select>
+      )}
+      {downloading ? (
+        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{percent}%</span>
+      ) : (
+        <Button
+                    disabled={!selected}
+          onClick={() => {
+            if (!selected) return;
+            setDownloading(true);
+            setPercent(0);
+            void downloadModel(selected);
+          }}
+        >
+          Download
+        </Button>
+      )}
+    </div>
+  );
+}
+
 export function SettingsPane({
   settings,
   onChange,
@@ -219,10 +278,20 @@ export function SettingsPane({
             <Row label="Engine" hint={settings.asr_mode === "local" ? "Whisper runs on this Mac. Works offline." : "An OpenAI-compatible transcription API, such as Groq."}>
               <Select label="Speech engine" value={settings.asr_mode} options={ASR_MODES} onChange={(v) => set("asr_mode", v)} />
             </Row>
-            {settings.asr_mode === "local" && installedModels.length > 0 && (
-              <Row label="Model" hint="Which Whisper model to use for transcription.">
-                <Select label="Whisper model" value={settings.whisper_model} options={modelOptions} onChange={(v) => set("whisper_model", v)} />
-              </Row>
+            {settings.asr_mode === "local" && (
+              <>
+                {installedModels.length > 0 && (
+                  <Row label="Model" hint="Which Whisper model to use for transcription.">
+                    <Select label="Whisper model" value={settings.whisper_model} options={modelOptions} onChange={(v) => set("whisper_model", v)} />
+                  </Row>
+                )}
+                <Row label="Models folder" hint="Add your own .bin files here, or download one.">
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <Button onClick={() => void openModelsFolder()}>Open folder</Button>
+                    <ModelDownloadButton models={models} onDone={() => void listModels().then(setModels)} />
+                  </div>
+                </Row>
+              </>
             )}
             {settings.asr_mode === "cloud" && (
               <>

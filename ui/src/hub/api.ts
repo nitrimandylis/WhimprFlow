@@ -362,6 +362,14 @@ export async function checkModelStatus(): Promise<boolean> {
   }
 }
 
+export async function openModelsFolder(): Promise<void> {
+  try {
+    await invoke<void>("open_models_folder");
+  } catch {
+    /* browser preview */
+  }
+}
+
 export async function downloadModel(modelName?: string): Promise<void> {
   try {
     await invoke<void>("download_model", { modelName });
