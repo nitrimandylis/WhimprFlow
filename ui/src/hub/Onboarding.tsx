@@ -206,7 +206,7 @@ export function Onboarding({ status, refresh, onEnter }: { status: StatusT; refr
             locked={!acc}
             action={<Button disabled={!acc} onClick={() => requestMicrophone()}>Grant</Button>}
           />
-          <ModelStep n={3} locked={!(acc && mic)} />
+          <ModelStep n={3} locked={false} />
           <Step
             n={4}
             title="Input Monitoring"
