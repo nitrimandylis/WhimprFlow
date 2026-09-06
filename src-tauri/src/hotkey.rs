@@ -211,7 +211,9 @@ mod imp {
             let duration_ms = (duration_secs.max(0.0) * 1000.0) as u32;
             let chars = text.chars().count() as u32;
             store.record(words, duration_ms, chars, unix_now(), text, app);
-            let _ = store.save(&stats_path());
+            if let Err(e) = store.save(&stats_path()) {
+                eprintln!("[whimpr] stats save failed: {e}");
+            }
         }
     }
 
@@ -247,7 +249,9 @@ mod imp {
         if let Some(m) = DICTIONARY.get() {
             let mut store = m.lock().unwrap();
             store.add(correct, mishears, whimpr_core::DictSource::Manual);
-            let _ = store.save(&dict_path());
+            if let Err(e) = store.save(&dict_path()) {
+                eprintln!("[whimpr] dictionary save failed: {e}");
+            }
         }
     }
 
@@ -256,7 +260,9 @@ mod imp {
         if let Some(m) = DICTIONARY.get() {
             let mut store = m.lock().unwrap();
             if store.remove(correct) {
-                let _ = store.save(&dict_path());
+                if let Err(e) = store.save(&dict_path()) {
+                    eprintln!("[whimpr] dictionary save failed: {e}");
+                }
             }
         }
     }
@@ -267,7 +273,9 @@ mod imp {
         if let Some(m) = DICTIONARY.get() {
             let mut store = m.lock().unwrap();
             store.add(correct, mishears, whimpr_core::DictSource::Auto);
-            let _ = store.save(&dict_path());
+            if let Err(e) = store.save(&dict_path()) {
+                eprintln!("[whimpr] dictionary save failed: {e}");
+            }
         }
     }
 
@@ -324,7 +332,9 @@ mod imp {
         if let Some(m) = SETTINGS.get() {
             *m.lock().unwrap() = new.clone();
         }
-        let _ = new.save(&settings_path());
+        if let Err(e) = new.save(&settings_path()) {
+            eprintln!("[whimpr] settings save failed: {e}");
+        }
         apply_live_settings(&new);
         rebuild_providers();
         let asr_changed = old.asr_mode != new.asr_mode

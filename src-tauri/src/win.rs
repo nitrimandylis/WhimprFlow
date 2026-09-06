@@ -266,7 +266,9 @@ fn record_dictation(text: &str, duration_secs: f32, app: Option<String>) {
         let duration_ms = (duration_secs.max(0.0) * 1000.0) as u32;
         let chars = text.chars().count() as u32;
         store.record(words, duration_ms, chars, unix_now(), text.to_string(), app);
-        let _ = store.save(&stats_path());
+        if let Err(e) = store.save(&stats_path()) {
+            log(format!("stats save failed: {e}"));
+        }
     }
 }
 
@@ -440,7 +442,9 @@ pub fn update_settings(new: whimpr_core::Settings) {
     if let Some(m) = SETTINGS.get() {
         *m.lock().unwrap() = new.clone();
     }
-    let _ = new.save(&settings_path());
+    if let Err(e) = new.save(&settings_path()) {
+        log(format!("settings save failed: {e}"));
+    }
     rebuild_providers();
 }
 
@@ -570,7 +574,9 @@ pub fn dictionary_add(correct: String, mishears: Vec<String>) {
     if let Some(m) = DICTIONARY.get() {
         let mut store = m.lock().unwrap();
         store.add(correct, mishears, whimpr_core::DictSource::Manual);
-        let _ = store.save(&dict_path());
+        if let Err(e) = store.save(&dict_path()) {
+            log(format!("dictionary save failed: {e}"));
+        }
     }
 }
 
@@ -578,7 +584,9 @@ pub fn dictionary_remove(correct: &str) {
     if let Some(m) = DICTIONARY.get() {
         let mut store = m.lock().unwrap();
         if store.remove(correct) {
-            let _ = store.save(&dict_path());
+            if let Err(e) = store.save(&dict_path()) {
+                log(format!("dictionary save failed: {e}"));
+            }
         }
     }
 }
@@ -587,6 +595,8 @@ pub fn dictionary_learn(correct: String, mishears: Vec<String>) {
     if let Some(m) = DICTIONARY.get() {
         let mut store = m.lock().unwrap();
         store.add(correct, mishears, whimpr_core::DictSource::Auto);
-        let _ = store.save(&dict_path());
+        if let Err(e) = store.save(&dict_path()) {
+            log(format!("dictionary save failed: {e}"));
+        }
     }
 }
