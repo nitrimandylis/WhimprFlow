@@ -194,7 +194,10 @@ export function App() {
     saveTimer.current = setTimeout(() => void setSettings(s), 400);
   };
 
-  if ((!(status.accessibility && status.microphone) || hasModel !== true) && !entered) {
+  // Show onboarding when permissions are missing OR no model is installed.
+  // The model check overrides `entered`: a deleted model needs re-onboarding
+  // even if the user completed setup before.
+  if (hasModel === false || (!(status.accessibility && status.microphone) && !entered)) {
     return <Onboarding status={status} refresh={refresh} onEnter={markEntered} />;
   }
 
