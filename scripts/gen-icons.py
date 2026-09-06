@@ -34,10 +34,12 @@ def draw_mark(draw: ImageDraw.Draw, cx: float, cy: float, size: float, color: st
     cursor_color = "#D1D1D6" if color in ("#E5E5E7",) else color
     beam_stroke = stroke * 0.8
 
-    # Center the whole composition: arcs on the left, gap, cursor on the right.
-    offset = -size * 0.02
-
-    cursor_x = cx + size * 0.24 + offset
+    # Shift the whole mark left so its visual midpoint sits on cx.
+    # Leftmost arc edge ~ cx - 0.24 - 0.34 = cx - 0.58
+    # Rightmost serif edge ~ cx + 0.08 + 0.11 = cx + 0.19
+    # Visual midpoint of the group = (-0.58 + 0.19) / 2 = -0.195, so shift +0.195
+    # But we're building from individual offsets, so just nudge cursor_x.
+    cursor_x = cx + size * 0.16
     cursor_h = size * 0.58
     serif_w = size * 0.11
 
@@ -57,12 +59,12 @@ def draw_mark(draw: ImageDraw.Draw, cx: float, cy: float, size: float, color: st
             fill=cursor_color,
         )
 
-    # Sound arcs: 2 arcs, bigger, opening rightward toward the cursor.
-    arc_center_x = cx - size * 0.18 + offset
+    # Sound arcs: 2 arcs opening rightward toward the cursor, spaced apart.
+    arc_center_x = cx - size * 0.36
     arc_center_y = cy
     arc_stroke = max(int(stroke), 2)
 
-    for radius in [size * 0.22, size * 0.36]:
+    for radius in [size * 0.18, size * 0.34]:
         bbox = [
             arc_center_x - radius, arc_center_y - radius,
             arc_center_x + radius, arc_center_y + radius,
@@ -107,22 +109,6 @@ def main():
     # 128x128@2x is 256px
     master.resize((256, 256), Image.LANCZOS).save(ICONS_DIR / "128x128@2x.png")
     print("128x128@2x.png")
-
-    # Windows icon sizes (Square*.png)
-    win_sizes = [
-        (30, "Square30x30Logo"),
-        (44, "Square44x44Logo"),
-        (50, "StoreLogo"),
-        (71, "Square71x71Logo"),
-        (89, "Square89x89Logo"),
-        (107, "Square107x107Logo"),
-        (142, "Square142x142Logo"),
-        (150, "Square150x150Logo"),
-        (284, "Square284x284Logo"),
-        (310, "Square310x310Logo"),
-    ]
-    for size, name in win_sizes:
-        master.resize((size, size), Image.LANCZOS).save(ICONS_DIR / f"{name}.png")
 
     # ICO (multi-resolution)
     ico_sizes = [master.resize((s, s), Image.LANCZOS) for s in [256, 64, 48, 32, 16]]
