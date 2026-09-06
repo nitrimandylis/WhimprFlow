@@ -397,8 +397,45 @@ fn set_pill_hit_rect(x: f64, y: f64, w: f64, h: f64) {
 
 #[tauri::command]
 fn set_pill_hover_lock(locked: bool) {
+    eprintln!("[whimpr] pill hover lock -> {locked}");
     PILL_HOVER_LOCK.store(locked, std::sync::atomic::Ordering::SeqCst);
 }
+
+/// Close the hover cluster now. FlowBar calls this after a pick in one of the
+/// quick-control menus: the pill should get out of the way without waiting for
+/// the cursor to wander off it.
+#[tauri::command]
+fn pill_hover_end(app: tauri::AppHandle) {
+    PILL_HOVER_LOCK.store(false, std::sync::atomic::Ordering::SeqCst);
+    let app_mt = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(w) = app_mt.get_webview_window(OVERLAY_LABEL) else { return };
+        hover_leave(&app_mt, &w);
+    });
+}
+
+/// The shared "cursor left the pill" transition: tell FlowBar, go back to
+/// click-through, and hand app activation back to whatever the user was in.
+fn hover_leave(app: &tauri::AppHandle, w: &WebviewWindow) {
+    HOVER_WAS_OVER.store(false, std::sync::atomic::Ordering::SeqCst);
+    let _ = app.emit_to(OVERLAY_LABEL, "whimpr://hover", false);
+    #[cfg(target_os = "macos")]
+    set_ignores_mouse(w, true);
+    #[cfg(target_os = "macos")]
+    if app_is_active() {
+        let hub_open = app
+            .get_webview_window(HUB_LABEL)
+            .and_then(|h| h.is_visible().ok())
+            .unwrap_or(false);
+        if !hub_open {
+            deactivate_app();
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = w;
+}
+
+static HOVER_WAS_OVER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Show the Hub on its Settings page (the pill's gear button).
 #[tauri::command]
@@ -447,7 +484,6 @@ mod pill_hit_tests {
 ///
 /// Same shape as the display watcher: the thread ticks, the main thread asks.
 fn spawn_hover_watcher(app: tauri::AppHandle) {
-    static WAS_OVER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     use std::sync::atomic::Ordering;
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_millis(60));
@@ -455,33 +491,25 @@ fn spawn_hover_watcher(app: tauri::AppHandle) {
         let _ = app.run_on_main_thread(move || {
             let Some(w) = app_mt.get_webview_window(OVERLAY_LABEL) else { return };
             let visible = w.is_visible().unwrap_or(false);
+            let was_over = HOVER_WAS_OVER.load(Ordering::SeqCst);
             let mut over = visible && cursor_over_pill_zone(&w, &app_mt);
             // A native <select> menu takes the cursor off the pill. Hold the
             // cluster open while it is up, but only while we are the active
             // app: a click into another app must always close it.
-            if PILL_HOVER_LOCK.load(Ordering::SeqCst) && WAS_OVER.load(Ordering::SeqCst) && app_is_active() {
+            if PILL_HOVER_LOCK.load(Ordering::SeqCst) && was_over && app_is_active() {
                 over = true;
             }
-            if over == WAS_OVER.swap(over, Ordering::SeqCst) {
+            if over == was_over {
                 return;
             }
-            let _ = app_mt.emit_to(OVERLAY_LABEL, "whimpr://hover", over);
-            // Toggle click-through: off while hovering so buttons work,
-            // back on when leaving so the pill never steals focus.
-            #[cfg(target_os = "macos")]
-            set_ignores_mouse(&w, !over);
-            // Clicking a chip activates WhimprFlow even though the window
-            // never becomes key. Hand activation back when the cluster closes
-            // so the next dictation still pastes into the app the user was in.
-            #[cfg(target_os = "macos")]
-            if !over && app_is_active() {
-                let hub_open = app_mt
-                    .get_webview_window(HUB_LABEL)
-                    .and_then(|h| h.is_visible().ok())
-                    .unwrap_or(false);
-                if !hub_open {
-                    deactivate_app();
-                }
+            if over {
+                HOVER_WAS_OVER.store(true, Ordering::SeqCst);
+                let _ = app_mt.emit_to(OVERLAY_LABEL, "whimpr://hover", true);
+                // Accept clicks while hovering so the quick controls work.
+                #[cfg(target_os = "macos")]
+                set_ignores_mouse(&w, false);
+            } else {
+                hover_leave(&app_mt, &w);
             }
         });
     });
@@ -1162,6 +1190,7 @@ pub fn run() {
             reset_pill_position,
             set_pill_hit_rect,
             set_pill_hover_lock,
+            pill_hover_end,
             open_hub_settings,
             list_models,
             check_model_status,

@@ -239,7 +239,8 @@ function Chip({
         {...lockHandlers()}
         onChange={(e) => {
           onChange(e.currentTarget.value);
-          void invokeSafe("set_pill_hover_lock", { locked: false });
+          // Picked: the pill has done its job, close the cluster now.
+          void invokeSafe("pill_hover_end");
         }}
         style={{ position: "absolute", inset: 0, width: "100%", opacity: 0, cursor: "pointer" }}
       >
