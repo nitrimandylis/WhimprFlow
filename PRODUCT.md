@@ -21,6 +21,6 @@ Fork of Blueturboguy07/WhimprFlow, branch `nick/polished`, aimed at daily use ra
 
 ## Where it is headed
 
-- Pill hover motion polish and a restyle to match the Hub.
+- Pill hover restyle to match the Hub.
 - Verify native switch and vibrancy rendering in the real Tauri window on macOS 14 and 15.
 - Windows build is unverified and second priority.

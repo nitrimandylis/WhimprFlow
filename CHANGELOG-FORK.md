@@ -36,10 +36,9 @@ the hotkey does — Stop distinguishes a held dictation (needs a key release) fr
 a hands-free one (needs a tap).
 
 **Hover reveals the controls.** The resting nub expands to show `Dictate fn` and
-adds three buttons: language (cycles EN → हिं → ગુ → Auto), microphone (starts a
-hands-free dictation), and scratchpad capture. The key hint reflects your actual
-configured key. Click-versus-drag is resolved by hold duration, since a native
-window drag seizes the mouse the moment it starts.
+a row of quick-control chips: microphone picker, language picker, cleanup engine
+picker, and a gear that opens Settings. The key hint reflects your actual
+configured key.
 
 **Show/hide, offset, and manual placement** are exposed in Settings → Flow Bar.
 
@@ -63,26 +62,10 @@ cues — start, inserted, cancelled.
 
 ## Cleanup
 
-**Snippets.** Spoken triggers expand to stored text. Matching is
-case-insensitive and whole-phrase, longest trigger first. Expansion runs *after*
-the deterministic gates, because an expansion multiplies the text and the
-over-deletion gate would otherwise reject the cleanup that produced it.
-
-**Transforms.** Saying "make this an email", "summarise this", "make this a to-do
-list", "make this bullet points" or "make this professional" at the *start* of a
-dictation reshapes the whole utterance. Leading-position matching only, with a
-word-boundary check. Transforms deliberately bypass the gates — those exist to
-stop a cleanup model rewriting when it shouldn't, and a transform is asked to
-rewrite.
-
-**Style.** Free-text preferences appended to the cleanup and transform prompts.
+**Style.** Free-text preferences appended to the cleanup prompts.
 This is *not* an automatically learned voice profile; it asks rather than infers.
 Note that Light cleanup tells the model to leave text as spoken when unsure,
 which overrides most style requests — Medium is where it takes effect.
-
-**Scratchpad.** A capture toggle routes finished dictations into a Hub text area
-instead of pasting them into the frontmost app. Persisted to disk; resets to off
-on restart so dictations can't silently vanish.
 
 ## Hub
 
@@ -116,6 +99,7 @@ on restart so dictations can't silently vanish.
 
 ## Tests
 
-`cargo test -p whimpr-core` covers snippet matching, transform detection, and the
-display geometry — 50+ tests. The build script runs them and refuses to package
-if any fail.
+`cargo test --workspace` covers settings, cleanup gates and levels, the state
+machine, diagnostics, permissions, dictionary, stats, audio, and display
+geometry — 83 tests across the workspace. The build script runs them and refuses
+to package if any fail.

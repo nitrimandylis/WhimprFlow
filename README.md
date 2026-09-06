@@ -60,9 +60,9 @@ cd ui && pnpm install && cd ..
 ./dev.sh
 ```
 
-Download a Whisper model into `~/Library/Application Support/WhimprFlow/models/`. The `ggml-large-v3-turbo.bin` (1.5 GB) is the sweet spot for Apple Silicon. See [docs/MODELS.md](docs/MODELS.md) for download links.
+First launch walks you through Accessibility and Microphone permissions, then lets you pick and download a Whisper model from inside the app. The `ggml-large-v3-turbo` (1.6 GB) is the sweet spot for Apple Silicon. You can also drop a `.bin` into `~/Library/Application Support/WhimprFlow/models/` manually. See [docs/MODELS.md](docs/MODELS.md) for download links.
 
-First launch will ask for Accessibility and Microphone permissions. Grant both, hold Fn, talk.
+Grant both permissions, hold Fn, talk.
 
 If double-tapping Fn opens Apple's own Dictation instead of locking a hands-free session, turn that shortcut off: System Settings → Keyboard → Dictation → Shortcut → Off, and set "Press 🌐 key to" → Do Nothing.
 
