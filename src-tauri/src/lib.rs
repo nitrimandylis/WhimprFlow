@@ -407,6 +407,10 @@ fn set_pill_hover_lock(locked: bool) {
 #[tauri::command]
 fn pill_hover_end(app: tauri::AppHandle) {
     PILL_HOVER_LOCK.store(false, std::sync::atomic::Ordering::SeqCst);
+    // The cursor is still over the pill after a pick (the menu sits on top
+    // of the chip), so without this the watcher would reopen it on its next
+    // tick. Stay closed until the cursor has left once.
+    HOVER_SUPPRESSED.store(true, std::sync::atomic::Ordering::SeqCst);
     let app_mt = app.clone();
     let _ = app.run_on_main_thread(move || {
         let Some(w) = app_mt.get_webview_window(OVERLAY_LABEL) else { return };
@@ -436,6 +440,7 @@ fn hover_leave(app: &tauri::AppHandle, w: &WebviewWindow) {
 }
 
 static HOVER_WAS_OVER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static HOVER_SUPPRESSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Show the Hub on its Settings page (the pill's gear button).
 #[tauri::command]
@@ -492,7 +497,14 @@ fn spawn_hover_watcher(app: tauri::AppHandle) {
             let Some(w) = app_mt.get_webview_window(OVERLAY_LABEL) else { return };
             let visible = w.is_visible().unwrap_or(false);
             let was_over = HOVER_WAS_OVER.load(Ordering::SeqCst);
-            let mut over = visible && cursor_over_pill_zone(&w, &app_mt);
+            let cursor_over = visible && cursor_over_pill_zone(&w, &app_mt);
+            if HOVER_SUPPRESSED.load(Ordering::SeqCst) {
+                if !cursor_over {
+                    HOVER_SUPPRESSED.store(false, Ordering::SeqCst);
+                }
+                return;
+            }
+            let mut over = cursor_over;
             // A native <select> menu takes the cursor off the pill. Hold the
             // cluster open while it is up, but only while we are the active
             // app: a click into another app must always close it.

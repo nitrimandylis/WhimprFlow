@@ -18,6 +18,7 @@ import {
   requestAccessibility,
   fixAccessibility,
   listenEvent,
+  checkModelStatus,
   type Settings,
   type Status,
   type LastError,
@@ -106,10 +107,12 @@ export function App() {
   // Stable across renders so the poll below is not restarted every render.
   const refresh = useCallback(
     () =>
-      getStatus().then((s) => {
+      getStatus().then(async (s) => {
         setStatus(s);
-        // Skip the gate on re-open once both required permissions are in.
-        if (s.accessibility && s.microphone) markEntered();
+        // Skip the gate on re-open once permissions + model are all set.
+        if (s.accessibility && s.microphone && (await checkModelStatus())) {
+          markEntered();
+        }
       }),
     [],
   );
@@ -138,7 +141,9 @@ export function App() {
     void onPermissions((p) => {
       setStatus((prev) => {
         const next = { ...prev, ...p };
-        if (next.accessibility && next.microphone) markEntered();
+        if (next.accessibility && next.microphone) {
+          void checkModelStatus().then((ok) => { if (ok) markEntered(); });
+        }
         return next;
       });
     }).then((u) => (gone ? u() : (stop = u)));
