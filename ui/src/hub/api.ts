@@ -358,7 +358,7 @@ export async function checkModelStatus(): Promise<boolean> {
   try {
     return await invoke<boolean>("check_model_status");
   } catch {
-    return true;
+    return false; // If we can't check, don't auto-close onboarding.
   }
 }
 

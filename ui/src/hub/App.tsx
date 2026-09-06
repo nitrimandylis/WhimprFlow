@@ -85,6 +85,9 @@ export function App() {
     }
   });
   const [status, setStatus] = useState<Status>(UNKNOWN_STATUS);
+  // Start unknown; the first refresh() resolves it. Don't default to true
+  // or onboarding flashes past the model step before the check completes.
+  const [hasModel, setHasModel] = useState<boolean | null>(null);
   const [lastError, setLastError] = useState<LastError | null>(null);
   const [errorDismissed, setErrorDismissed] = useState(false);
 
@@ -109,10 +112,9 @@ export function App() {
     () =>
       getStatus().then(async (s) => {
         setStatus(s);
-        // Skip the gate on re-open once permissions + model are all set.
-        if (s.accessibility && s.microphone && (await checkModelStatus())) {
-          markEntered();
-        }
+        const model = await checkModelStatus();
+        setHasModel(model);
+        if (s.accessibility && s.microphone && model) markEntered();
       }),
     [],
   );
@@ -142,7 +144,10 @@ export function App() {
       setStatus((prev) => {
         const next = { ...prev, ...p };
         if (next.accessibility && next.microphone) {
-          void checkModelStatus().then((ok) => { if (ok) markEntered(); });
+          void checkModelStatus().then((ok) => {
+            setHasModel(ok);
+            if (ok) markEntered();
+          });
         }
         return next;
       });
@@ -189,7 +194,7 @@ export function App() {
     saveTimer.current = setTimeout(() => void setSettings(s), 400);
   };
 
-  if (!(status.accessibility && status.microphone) && !entered) {
+  if ((!(status.accessibility && status.microphone) || hasModel !== true) && !entered) {
     return <Onboarding status={status} refresh={refresh} onEnter={markEntered} />;
   }
 
