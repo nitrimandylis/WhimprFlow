@@ -2,7 +2,7 @@
 
 Local-first voice dictation for macOS. Hold a key, speak, release. Clean text lands at the cursor. Whisper runs on-device, a local Qwen model or a cloud API does the cleanup pass. No account, no telemetry.
 
-Fork of Blueturboguy07/WhimprFlow, branch `nick/polished`, aimed at daily use rather than a demo.
+Fork of Blueturboguy07/WhimprFlow, aimed at daily use rather than a demo.
 
 ## What it is
 

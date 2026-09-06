@@ -50,13 +50,14 @@ nick@whimprflow:~$ fn (hold) → "schedule the meeting for thursday at three"
 
 ## 🚀 Run it
 
-Grab the unsigned DMG from [GitHub Actions artifacts](https://github.com/nitrimandylis/WhimprFlow/actions) (latest passing build on `nick/polished`), or build from source:
+Grab the DMG from the [latest release](https://github.com/nitrimandylis/WhimprFlow/releases/latest). The app is unsigned, so on first launch: right-click > Open, or run `xattr -cr /Applications/WhimprFlow.app`.
+
+Or build from source:
 
 ```bash
 # prerequisites: rust (stable), node, pnpm, cmake, xcode cli tools
 git clone https://github.com/nitrimandylis/WhimprFlow.git
-cd WhimprFlow && git checkout nick/polished
-cd ui && pnpm install && cd ..
+cd WhimprFlow && cd ui && pnpm install && cd ..
 ./dev.sh
 ```
 
