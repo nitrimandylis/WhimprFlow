@@ -456,7 +456,10 @@ fn spawn_hover_watcher(app: tauri::AppHandle) {
             let Some(w) = app_mt.get_webview_window(OVERLAY_LABEL) else { return };
             let visible = w.is_visible().unwrap_or(false);
             let mut over = visible && cursor_over_pill_zone(&w, &app_mt);
-            if PILL_HOVER_LOCK.load(Ordering::SeqCst) && WAS_OVER.load(Ordering::SeqCst) {
+            // A native <select> menu takes the cursor off the pill. Hold the
+            // cluster open while it is up, but only while we are the active
+            // app: a click into another app must always close it.
+            if PILL_HOVER_LOCK.load(Ordering::SeqCst) && WAS_OVER.load(Ordering::SeqCst) && app_is_active() {
                 over = true;
             }
             if over == WAS_OVER.swap(over, Ordering::SeqCst) {
@@ -467,8 +470,44 @@ fn spawn_hover_watcher(app: tauri::AppHandle) {
             // back on when leaving so the pill never steals focus.
             #[cfg(target_os = "macos")]
             set_ignores_mouse(&w, !over);
+            // Clicking a chip activates WhimprFlow even though the window
+            // never becomes key. Hand activation back when the cluster closes
+            // so the next dictation still pastes into the app the user was in.
+            #[cfg(target_os = "macos")]
+            if !over && app_is_active() {
+                let hub_open = app_mt
+                    .get_webview_window(HUB_LABEL)
+                    .and_then(|h| h.is_visible().ok())
+                    .unwrap_or(false);
+                if !hub_open {
+                    deactivate_app();
+                }
+            }
         });
     });
+}
+
+#[cfg(target_os = "macos")]
+fn app_is_active() -> bool {
+    use objc2_app_kit::NSApplication;
+    use objc2_foundation::MainThreadMarker;
+    // Only ever called from run_on_main_thread.
+    let Some(mtm) = MainThreadMarker::new() else { return false };
+    NSApplication::sharedApplication(mtm).isActive()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn app_is_active() -> bool {
+    false
+}
+
+#[cfg(target_os = "macos")]
+fn deactivate_app() {
+    use objc2_app_kit::NSApplication;
+    use objc2_foundation::MainThreadMarker;
+    let Some(mtm) = MainThreadMarker::new() else { return };
+    #[allow(deprecated)]
+    NSApplication::sharedApplication(mtm).deactivate();
 }
 
 /// Set or clear ignoresMouseEvents on the overlay's NSWindow.
@@ -513,6 +552,11 @@ fn build_overlay(app: &tauri::App) -> tauri::Result<WebviewWindow> {
     .always_on_top(true)
     .skip_taskbar(true)
     .focused(false)
+    // Never a key window, so clicking a chip can't move keyboard focus off the
+    // app being dictated into. Clicks then arrive as "first mouse", which the
+    // webview drops unless told to accept them.
+    .focusable(false)
+    .accept_first_mouse(true)
     .resizable(false)
     // Hidden at rest: the pill only exists while WhimprFlow is actually doing
     // something (recording, cleaning up, flashing done, showing an error). The

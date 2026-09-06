@@ -179,10 +179,14 @@ async function invokeSafe<T>(cmd: string, args?: Record<string, unknown>): Promi
 
 /// Hold the hover open while a native <select> popup is up: the cursor leaves
 /// the pill to pick an item, and without this Rust would collapse the cluster.
+/// The menu opens on mousedown. It closes on a pick (change) or a dismiss,
+/// and after a dismiss the next cursor move off the select fires mouseleave;
+/// the menu is modal, so neither can fire while it is still open.
 function lockHandlers() {
+  const lock = (locked: boolean) => void invokeSafe("set_pill_hover_lock", { locked });
   return {
-    onFocus: () => void invokeSafe("set_pill_hover_lock", { locked: true }),
-    onBlur: () => void invokeSafe("set_pill_hover_lock", { locked: false }),
+    onMouseDown: () => lock(true),
+    onMouseLeave: () => lock(false),
   };
 }
 
@@ -235,7 +239,7 @@ function Chip({
         {...lockHandlers()}
         onChange={(e) => {
           onChange(e.currentTarget.value);
-          e.currentTarget.blur();
+          void invokeSafe("set_pill_hover_lock", { locked: false });
         }}
         style={{ position: "absolute", inset: 0, width: "100%", opacity: 0, cursor: "pointer" }}
       >
