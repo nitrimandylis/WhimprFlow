@@ -218,6 +218,10 @@ pub struct Settings {
     /// Hub appearance: follow the system, or pin light or dark.
     #[serde(default)]
     pub appearance: Appearance,
+    /// Local Whisper model filename (e.g. "ggml-large-v3-turbo.bin"). Empty
+    /// means auto-pick the best installed model.
+    #[serde(default)]
+    pub whisper_model: String,
 }
 
 /// The out-of-the-box hands-free hotkey. Chosen to match what the cofounder
@@ -267,6 +271,7 @@ impl Default for Settings {
             style_instructions: String::new(),
             save_history: true,
             appearance: Appearance::default(),
+            whisper_model: String::new(),
         }
     }
 }

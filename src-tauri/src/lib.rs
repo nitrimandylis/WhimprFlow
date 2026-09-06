@@ -714,38 +714,82 @@ fn copy_to_clipboard(text: String) -> Result<(), String> {
 }
 
 // ── Model download ──────────────────────────────────────────────────────────
-/// Whether the speech model exists on disk. The frontend shows a download
-/// step in onboarding when this returns false.
+
+/// Known Whisper models available for download.
+const WHISPER_MODELS: &[(&str, &str, u64)] = &[
+    ("ggml-base.en.bin",          "Base (English)",          148 ),
+    ("ggml-base.bin",             "Base (Multilingual)",     148 ),
+    ("ggml-small.en.bin",         "Small (English)",         488 ),
+    ("ggml-small.bin",            "Small (Multilingual)",    488 ),
+    ("ggml-medium.en.bin",        "Medium (English)",        1530),
+    ("ggml-medium.bin",           "Medium (Multilingual)",   1530),
+    ("ggml-large-v3-turbo.bin",   "Large V3 Turbo",         1630),
+    ("ggml-large-v3.bin",         "Large V3",               3090),
+];
+
+#[derive(Clone, Serialize)]
+struct ModelInfo {
+    name: String,
+    label: String,
+    size_mb: u64,
+    installed: bool,
+}
+
+/// List known Whisper models with their installed status.
+#[tauri::command]
+fn list_models() -> Vec<ModelInfo> {
+    let dir = hotkey::models_dir();
+    let mut models: Vec<ModelInfo> = WHISPER_MODELS
+        .iter()
+        .map(|(name, label, size_mb)| ModelInfo {
+            name: name.to_string(),
+            label: label.to_string(),
+            size_mb: *size_mb,
+            installed: dir.join(name).exists(),
+        })
+        .collect();
+    // Also include any user-downloaded .bin files not in the known list.
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let fname = entry.file_name().to_string_lossy().to_string();
+            if fname.ends_with(".bin") && !fname.ends_with(".partial")
+                && !models.iter().any(|m| m.name == fname)
+            {
+                let size = entry.metadata().map(|m| m.len() / (1024 * 1024)).unwrap_or(0);
+                models.push(ModelInfo {
+                    name: fname.clone(),
+                    label: fname.trim_end_matches(".bin").to_string(),
+                    size_mb: size,
+                    installed: true,
+                });
+            }
+        }
+    }
+    models
+}
+
+/// Whether any speech model exists on disk.
 #[tauri::command]
 fn check_model_status() -> bool {
     hotkey::model_path().exists()
 }
 
-/// Whether a model download is already running, so a second click (or a
-/// second window) cannot start another writer on the same partial file.
+/// Whether a model download is already running.
 static DOWNLOADING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Download the starter Whisper model (~148 MB). Emits
-/// `whimpr://model/progress` events with { percent: u8 } so the UI can
-/// show a progress bar. Runs on a background thread; returns immediately.
-///
-/// English gets `ggml-base.en.bin`, which is the more accurate of the two for
-/// English. Any other language setting gets the multilingual `ggml-base.bin`:
-/// the `.en` model ignores the language setting entirely, which made the
-/// pill's language switch a no-op after onboarding.
+/// Download a specific Whisper model by filename. Emits progress events.
 #[tauri::command]
-fn download_model(app: tauri::AppHandle) {
+fn download_model(app: tauri::AppHandle, model_name: Option<String>) {
     use std::sync::atomic::Ordering;
     if DOWNLOADING.swap(true, Ordering::SeqCst) {
         return;
     }
     std::thread::spawn(move || {
-        let result = download_model_blocking(&app);
+        let result = download_model_blocking(&app, model_name.as_deref());
         DOWNLOADING.store(false, Ordering::SeqCst);
         match result {
             Ok(()) => {
                 let _ = app.emit("whimpr://model/done", serde_json::json!({ "ok": true }));
-                // Reload ASR now that the model exists.
                 hotkey::rebuild_asr(&hotkey::current_settings());
             }
             Err(e) => {
@@ -756,14 +800,16 @@ fn download_model(app: tauri::AppHandle) {
     });
 }
 
-fn download_model_blocking(app: &tauri::AppHandle) -> anyhow::Result<()> {
+fn download_model_blocking(app: &tauri::AppHandle, model_name: Option<&str>) -> anyhow::Result<()> {
     let dir = hotkey::models_dir();
     std::fs::create_dir_all(&dir)?;
-    let name = if hotkey::current_settings().language == "en" {
-        "ggml-base.en.bin"
-    } else {
-        "ggml-base.bin"
-    };
+    let name = model_name.unwrap_or_else(|| {
+        if hotkey::current_settings().language == "en" {
+            "ggml-base.en.bin"
+        } else {
+            "ggml-base.bin"
+        }
+    });
     let dest = dir.join(name);
     if dest.exists() {
         let _ = app.emit("whimpr://model/progress", serde_json::json!({ "percent": 100 }));
@@ -1073,6 +1119,7 @@ pub fn run() {
             set_pill_hit_rect,
             set_pill_hover_lock,
             open_hub_settings,
+            list_models,
             check_model_status,
             download_model,
             get_dictionary,

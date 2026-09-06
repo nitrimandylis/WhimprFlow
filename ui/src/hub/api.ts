@@ -51,6 +51,8 @@ export interface Settings {
   // Hub window appearance. Applied by Rust to the window, so vibrancy and
   // prefers-color-scheme change together.
   appearance: Appearance;
+  // Local Whisper model filename. Empty = auto-pick best installed.
+  whisper_model: string;
 }
 
 export type PushToTalkKey = "fn" | "right_command" | "right_option" | "right_control";
@@ -180,6 +182,7 @@ export const DEFAULT_SETTINGS: Settings = {
   style_instructions: "",
   save_history: true,
   appearance: "system",
+  whisper_model: "",
 };
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -336,17 +339,32 @@ export async function restartApp(): Promise<void> {
 }
 
 // ── Model download ──────────────────────────────────────────────────────────
+export interface ModelInfo {
+  name: string;
+  label: string;
+  size_mb: number;
+  installed: boolean;
+}
+
+export async function listModels(): Promise<ModelInfo[]> {
+  try {
+    return await invoke<ModelInfo[]>("list_models");
+  } catch {
+    return [];
+  }
+}
+
 export async function checkModelStatus(): Promise<boolean> {
   try {
     return await invoke<boolean>("check_model_status");
   } catch {
-    return true; // browser preview: assume model exists
+    return true;
   }
 }
 
-export async function downloadModel(): Promise<void> {
+export async function downloadModel(modelName?: string): Promise<void> {
   try {
-    await invoke<void>("download_model");
+    await invoke<void>("download_model", { modelName });
   } catch {
     /* browser preview */
   }

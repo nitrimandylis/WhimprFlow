@@ -155,10 +155,18 @@ mod imp {
         support_dir().join("models")
     }
 
-    /// The whisper ASR model to load: the best one present, else the base model
-    /// path (which then does not exist, and the caller reports it).
+    /// The whisper ASR model to load. If `whisper_model` is set in settings,
+    /// use that. Otherwise pick the best installed model from MODEL_NAMES.
     pub fn model_path() -> PathBuf {
         let dir = models_dir();
+        let selected = current_settings().whisper_model;
+        if !selected.is_empty() {
+            let p = dir.join(&selected);
+            if p.exists() {
+                return p;
+            }
+            eprintln!("[whimpr] selected model {selected} not found, falling back to auto");
+        }
         MODEL_NAMES
             .iter()
             .map(|name| dir.join(name))
@@ -1024,19 +1032,12 @@ mod imp {
         if crate::paste::is_trusted() {
             eprintln!("[whimpr] Accessibility granted — Fn works in every app, paste enabled");
         } else {
+            // Don't auto-prompt on startup. Let the onboarding UI handle it when
+            // the user clicks "Grant". Auto-prompting fires the system dialog and
+            // opens System Settings before the user even sees the onboarding screen.
             eprintln!(
-                "[whimpr] ⚠ Accessibility NOT granted — clearing any stale TCC entry, \
-                 re-prompting, and opening System Settings → Privacy & Security → \
-                 Accessibility (no relaunch needed)."
+                "[whimpr] ⚠ Accessibility NOT granted — waiting for user to grant via onboarding"
             );
-            std::thread::spawn(|| {
-                // Let the Hub/onboarding window mount first so the user sees it
-                // before the Settings pane opens over it.
-                std::thread::sleep(Duration::from_millis(800));
-                if let Err(e) = crate::reset_and_prompt_accessibility() {
-                    eprintln!("[whimpr] accessibility self-heal failed: {e}");
-                }
-            });
         }
         // Input Monitoring is NOT the gate for a CGEventTap — kept only as diagnostics.
         eprintln!(

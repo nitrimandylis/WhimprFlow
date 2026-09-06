@@ -7,9 +7,11 @@ import {
   requestInputMonitoring,
   restartApp,
   checkModelStatus,
+  listModels,
   downloadModel,
   onModelProgress,
   onModelDone,
+  type ModelInfo,
   type Status as StatusT,
 } from "./api";
 
@@ -51,12 +53,20 @@ function Step({
 
 function ModelStep({ n, locked }: { n: number; locked: boolean }) {
   const [hasModel, setHasModel] = useState<boolean | null>(null);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [selected, setSelected] = useState("ggml-base.en.bin");
   const [downloading, setDownloading] = useState(false);
   const [percent, setPercent] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     void checkModelStatus().then(setHasModel);
+    void listModels().then((m) => {
+      setModels(m);
+      // Default to the best installed model, or base if none installed.
+      const installed = m.find((x) => x.installed);
+      if (installed) setSelected(installed.name);
+    });
   }, []);
 
   useEffect(() => {
@@ -69,25 +79,44 @@ function ModelStep({ n, locked }: { n: number; locked: boolean }) {
       if (p.ok) {
         setHasModel(true);
         setPercent(100);
+        // Refresh model list.
+        void listModels().then(setModels);
       } else {
         setError(p.error ?? "Download failed");
       }
     }).then((u) => (stop2 = u));
-    return () => {
-      stop1?.();
-      stop2?.();
-    };
+    return () => { stop1?.(); stop2?.(); };
   }, [downloading]);
 
   const done = hasModel === true;
+  const selectedModel = models.find((m) => m.name === selected);
+  const selectedInstalled = selectedModel?.installed ?? false;
+
   return (
     <div className={`row${locked ? " locked" : ""}`}>
       <div className={`step-num${done ? " done" : ""}`}>{done ? "✓" : n}</div>
       <div className="row-text">
         <div className="row-label">Speech model</div>
         <div className="row-hint">
-          {downloading ? `Downloading, ${percent}%` : error ?? "A 148 MB model for on-device transcription."}
+          {downloading
+            ? `Downloading ${selected}, ${percent}%`
+            : error ?? "Choose a Whisper model for on-device transcription."}
         </div>
+        {!done && !downloading && models.length > 0 && (
+          <select
+            value={selected}
+            onChange={(e) => setSelected(e.target.value)}
+            disabled={locked || downloading}
+            style={{ marginTop: 6, width: "100%", padding: "4px 6px", fontSize: 13, borderRadius: 6 }}
+          >
+            {models.map((m) => (
+              <option key={m.name} value={m.name}>
+                {m.label} ({m.size_mb >= 1000 ? `${(m.size_mb / 1000).toFixed(1)} GB` : `${m.size_mb} MB`})
+                {m.installed ? " ✓" : ""}
+              </option>
+            ))}
+          </select>
+        )}
         {downloading && (
           <div className="progress">
             <div style={{ width: `${percent}%` }} />
@@ -95,7 +124,9 @@ function ModelStep({ n, locked }: { n: number; locked: boolean }) {
         )}
       </div>
       <div className="row-control">
-        {done ? (
+        {done && !downloading ? (
+          <Status ok>Installed</Status>
+        ) : selectedInstalled && !downloading ? (
           <Status ok>Installed</Status>
         ) : (
           <Button
@@ -104,10 +135,10 @@ function ModelStep({ n, locked }: { n: number; locked: boolean }) {
               setError(null);
               setDownloading(true);
               setPercent(0);
-              void downloadModel();
+              void downloadModel(selected);
             }}
           >
-            {error ? "Retry" : "Download"}
+            {downloading ? `${percent}%` : error ? "Retry" : "Download"}
           </Button>
         )}
       </div>
