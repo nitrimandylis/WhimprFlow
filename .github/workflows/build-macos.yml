@@ -2,7 +2,7 @@ name: Build macOS
 
 on:
   push:
-    branches: [nick/polished]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
