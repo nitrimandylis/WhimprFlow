@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Button, Empty, Kbd, PageHeader } from "./ui";
 import { Icon } from "./icons";
-import { copyToClipboard, getHistory, type HistoryItem, type Settings } from "./api";
+import { copyToClipboard, getHistory, pttLabel, type HistoryItem, type Settings } from "./api";
 import { dayKey, dayLabel, fmtTimeOfDay } from "./format";
 import { useToast } from "./Toast";
+import { usePlatform } from "../platform";
 
 type Group = { key: string; label: string; items: HistoryItem[] };
 
@@ -25,17 +26,11 @@ function groupByDay(items: HistoryItem[]): Group[] {
   return groups;
 }
 
-const PTT_LABEL: Record<Settings["push_to_talk_key"], string> = {
-  fn: "fn",
-  right_command: "right ⌘",
-  right_option: "right ⌥",
-  right_control: "right ⌃",
-};
-
 export function History({ settings }: { settings: Settings }) {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [query, setQuery] = useState("");
   const toast = useToast();
+  const platform = usePlatform();
 
   useEffect(() => {
     let alive = true;
@@ -51,7 +46,7 @@ export function History({ settings }: { settings: Settings }) {
   const q = query.trim().toLowerCase();
   const filtered = q ? history.filter((h) => h.text.toLowerCase().includes(q)) : history;
   const groups = groupByDay(filtered);
-  const key = PTT_LABEL[settings.push_to_talk_key];
+  const key = pttLabel(platform)[settings.push_to_talk_key];
 
   async function copy(text: string) {
     if (await copyToClipboard(text)) toast.success("Copied");

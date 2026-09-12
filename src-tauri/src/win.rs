@@ -44,6 +44,9 @@ static RECORDING: AtomicBool = AtomicBool::new(false);
 /// True once the WH_KEYBOARD_LL hook is actually installed — the Windows
 /// analogue of macOS's `TAP_LIVE`, surfaced to the Hub as `hotkey_wired`.
 static HOOK_LIVE: AtomicBool = AtomicBool::new(false);
+/// Last bar state pushed to the overlay, so `sync_pill_visibility` can re-show
+/// the right one (mirrors macOS `LAST_BAR`).
+static LAST_BAR: OnceLock<Mutex<&'static str>> = OnceLock::new();
 static CAPTURE: OnceLock<Mutex<Option<whimpr_audio::CaptureHandle>>> = OnceLock::new();
 static ASR: OnceLock<Mutex<Option<Arc<dyn AsrEngine>>>> = OnceLock::new();
 static LOCAL: OnceLock<Mutex<Option<crate::local_llm::LocalWorker>>> = OnceLock::new();
@@ -66,15 +69,53 @@ fn dict_path() -> std::path::PathBuf {
 fn stats_path() -> std::path::PathBuf {
     support_dir().join("stats.json")
 }
-fn whisper_model_path() -> std::path::PathBuf {
-    let dir = support_dir().join("models");
-    for name in ["ggml-medium.en.bin", "ggml-small.en.bin", "ggml-base.en.bin"] {
-        let p = dir.join(name);
+/// Whisper model files, best first. Bigger models mis-hear names and technical
+/// terms far less. Shared with the Hub's model-status check and the download
+/// logic so the three can never disagree.
+const MODEL_NAMES: &[&str] = &[
+    "ggml-large-v3-turbo.bin",
+    "ggml-medium.en.bin",
+    "ggml-small.en.bin",
+    "ggml-base.bin",
+    "ggml-base.en.bin",
+];
+
+/// The models directory: `%APPDATA%\WhimprFlow\models`.
+pub fn models_dir() -> std::path::PathBuf {
+    support_dir().join("models")
+}
+
+/// The whisper ASR model to load. If `whisper_model` is set in settings and the
+/// file exists, use it. Otherwise pick the best installed model for the
+/// configured language: English users get the `.en`-optimized variants, anyone
+/// else the multilingual `ggml-*.bin` files — so a non-English user never
+/// silently gets an English-only model that can't transcribe their language.
+pub fn model_path() -> std::path::PathBuf {
+    let dir = models_dir();
+    let settings = current_settings_inner();
+    let selected = settings.whisper_model;
+    if !selected.is_empty() {
+        let p = dir.join(&selected);
         if p.exists() {
             return p;
         }
+        log(format!("selected model {selected} not found, falling back to auto"));
     }
-    dir.join("ggml-base.en.bin")
+    let english = settings.language == "en";
+    MODEL_NAMES
+        .iter()
+        .filter(|name| english == name.contains(".en.bin"))
+        .map(|name| dir.join(name))
+        .find(|p| p.exists())
+        .or_else(|| {
+            MODEL_NAMES.iter().map(|name| dir.join(name)).find(|p| p.exists())
+        })
+        .unwrap_or_else(|| dir.join(if english { "ggml-base.en.bin" } else { "ggml-base.bin" }))
+}
+
+/// Internal alias used by the ASR builder.
+fn whisper_model_path() -> std::path::PathBuf {
+    model_path()
 }
 
 fn log_path() -> std::path::PathBuf {
@@ -105,11 +146,21 @@ fn now_ms() -> u64 {
 }
 
 fn emit_bar(state: &'static str) {
+    // Remembered so `sync_pill_visibility` can re-show the right state.
+    *LAST_BAR.get_or_init(|| Mutex::new("idle")).lock().unwrap() = state;
     if let Some(app) = APP.get() {
         // Shared emitter also toggles the overlay window: visible for every
         // state except idle.
         crate::emit_flowbar_state(app, state);
     }
+}
+
+/// The last flow-bar state pushed to the overlay, `"idle"` if none yet.
+pub fn last_bar() -> &'static str {
+    LAST_BAR
+        .get()
+        .map(|m| *m.lock().unwrap())
+        .unwrap_or("idle")
 }
 
 /// Whether the keyboard hook is live (see [`HOOK_LIVE`]).
@@ -202,11 +253,22 @@ pub fn paste_text(text: &str) -> anyhow::Result<()> {
 
 // ── Cleanup (shared, cross-platform building blocks) ────────────────────────────
 
+/// Windows only implements Right Control as the push-to-talk key (see
+/// `PTT_VK`). Force the setting so the UI never advertises a macOS-only key
+/// (Fn / Globe, Right ⌘, Right ⌥) that the hook would ignore, and so every
+/// reader sees the key the hook actually responds to.
+fn normalize_ptt(mut s: whimpr_core::Settings) -> whimpr_core::Settings {
+    s.push_to_talk_key = whimpr_core::PushToTalkKey::RightControl;
+    s
+}
+
 fn current_settings_inner() -> whimpr_core::Settings {
-    SETTINGS
-        .get()
-        .map(|m| m.lock().unwrap().clone())
-        .unwrap_or_default()
+    normalize_ptt(
+        SETTINGS
+            .get()
+            .map(|m| m.lock().unwrap().clone())
+            .unwrap_or_default(),
+    )
 }
 
 fn clean_transcript(raw: &str) -> String {
@@ -439,6 +501,7 @@ pub fn current_settings() -> whimpr_core::Settings {
 }
 
 pub fn update_settings(new: whimpr_core::Settings) {
+    let new = normalize_ptt(new);
     if let Some(m) = SETTINGS.get() {
         *m.lock().unwrap() = new.clone();
     }
@@ -448,13 +511,61 @@ pub fn update_settings(new: whimpr_core::Settings) {
     rebuild_providers();
 }
 
-/// Stop / cancel the overlay pill's current recording. The Windows dictation
-/// driver does not route through the shared `handle_input` state machine the
-/// macOS layer uses, so these are inert here for now — the pill's Stop/✕ buttons
-/// are wired on macOS (Publik Test 2); a Windows equivalent is separate work.
-pub fn stop_dictation() {}
-pub fn cancel_dictation() {}
-pub fn trigger_hands_free() {}
+/// Discard the in-flight dictation and discard what has been captured. Same
+/// semantics as pressing the pill's ✕ / Esc on the keyboard hook.
+pub fn ui_cancel() {
+    RECORDING.store(false, Ordering::SeqCst);
+    if let Some(handle) = CAPTURE.get().and_then(|slot| slot.lock().unwrap().take()) {
+        drop(handle);
+    }
+    emit_bar("idle");
+}
+
+/// Finish now and insert what has been said so far. Same as the pill's ■ / the
+/// push-to-talk key going up.
+pub fn ui_stop() {
+    on_ptt_up();
+}
+
+/// Start a hands-free dictation from a click on the pill.
+pub fn ui_start() {
+    if RECORDING.load(Ordering::SeqCst) {
+        return;
+    }
+    on_ptt_down();
+}
+
+/// Toggle HANDS-FREE (locked) dictation — the customizable global hotkey fires
+/// this. From idle it starts a locked session that keeps recording with no key
+/// held; while one is running it finalizes.
+pub fn trigger_hands_free() {
+    if RECORDING.load(Ordering::SeqCst) {
+        on_ptt_up();
+    } else {
+        on_ptt_down();
+    }
+}
+
+/// Read an API key from an env var or the OS keyring (never a plaintext file).
+fn read_key(account: &str, env_var: &str) -> Option<String> {
+    if let Ok(k) = std::env::var(env_var) {
+        let k = k.trim().to_string();
+        if !k.is_empty() {
+            return Some(k);
+        }
+    }
+    keyring::Entry::new("com.whimpr.whimprflow", account)
+        .ok()
+        .and_then(|e| e.get_password().ok())
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty())
+}
+pub fn read_openai_key() -> Option<String> {
+    read_key("openai_api_key", "OPENAI_API_KEY")
+}
+pub fn read_anthropic_key() -> Option<String> {
+    read_key("anthropic_api_key", "ANTHROPIC_API_KEY")
+}
 
 pub fn rebuild_providers() {
     let settings = current_settings_inner();
@@ -476,7 +587,7 @@ pub fn rebuild_providers() {
 /// (Re)build the speech-to-text engine to match the current ASR mode. Cloud is
 /// built synchronously (just an HTTP client, no load time); local Whisper loads
 /// off-thread since parsing the GGUF model takes ~1s.
-fn rebuild_asr(settings: &whimpr_core::Settings) {
+pub fn rebuild_asr(settings: &whimpr_core::Settings) {
     match settings.asr_mode {
         whimpr_core::AsrMode::Cloud => {
             let key = keyring::Entry::new("com.whimpr.whimprflow", "openai_api_key")

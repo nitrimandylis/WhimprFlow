@@ -6,7 +6,7 @@ import { useToast } from "./Toast";
 const TIPS: { title: string; body: string }[] = [
   {
     title: "Hold to dictate",
-    body: "Press and hold your dictation key, speak, release. Transcription runs on this Mac unless you pick a cloud engine.",
+    body: "Press and hold your dictation key, speak, release. Transcription runs on this computer unless you pick a cloud engine.",
   },
   {
     title: "Text lands at the cursor",

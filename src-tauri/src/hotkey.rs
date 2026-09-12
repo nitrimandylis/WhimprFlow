@@ -1144,9 +1144,10 @@ pub use imp::{
 // Windows uses the real (but unverified) platform layer in `crate::win`.
 #[cfg(target_os = "windows")]
 pub use crate::win::{
-    cancel_dictation, current_settings, dictionary_add, dictionary_entries, dictionary_learn,
-    dictionary_remove, history, install, mark_tap_stale, rebuild_providers, stats_summary,
-    stop_dictation, tap_live, trigger_hands_free, update_settings,
+    current_settings, dictionary_add, dictionary_entries, dictionary_learn,
+    dictionary_remove, history, install, last_bar, mark_tap_stale, model_path, models_dir,
+    read_anthropic_key, read_openai_key, rebuild_asr, rebuild_providers, stats_summary,
+    tap_live, trigger_hands_free, ui_cancel, ui_start, ui_stop, update_settings,
 };
 
 // Other platforms (Linux, etc.): inert stubs so the crate still builds.

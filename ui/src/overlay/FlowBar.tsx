@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { palette, pillFill, geometry, font } from "../tokens/values";
-import { LANGUAGES, type Settings } from "../hub/api";
+import { LANGUAGES, pttLabel, type Settings } from "../hub/api";
+import { usePlatform } from "../platform";
 
 // Visual states, mirroring the Rust `BarState`.
 export type BarState =
@@ -153,13 +154,6 @@ function StopButton() {
 // ── Hover quick controls ────────────────────────────────────────────────────
 // Shown below the pill on hover. Rust toggles ignoresMouseEvents so these
 // receive real clicks without the pill stealing focus at rest.
-
-const PTT_LABEL: Record<string, string> = {
-  fn: "fn",
-  right_command: "right ⌘",
-  right_option: "right ⌥",
-  right_control: "right ⌃",
-};
 
 const CLEANUP_OPTIONS = [
   { value: "raw", label: "Raw" },
@@ -343,6 +337,7 @@ export function FlowBar() {
   const [hover, setHover] = useState(false);
   const [settings, setSettingsState] = useState<Settings | null>(null);
   const clusterRef = useRef<HTMLDivElement | null>(null);
+  const platform = usePlatform();
 
   // Read settings the quick controls display, refreshed each hover.
   useEffect(() => {
@@ -468,7 +463,7 @@ export function FlowBar() {
               }}
             >
               <span>Dictate</span>
-              <b style={{ fontWeight: 700 }}>{PTT_LABEL[settings?.push_to_talk_key ?? "fn"] ?? "fn"}</b>
+              <b style={{ fontWeight: 700 }}>{pttLabel(platform)[settings?.push_to_talk_key ?? "right_control"]}</b>
             </div>
           ) : null
         ) : recording ? (

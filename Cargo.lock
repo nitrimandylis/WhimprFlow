@@ -5273,7 +5273,7 @@ dependencies = [
 
 [[package]]
 name = "whimpr-asr"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "hound",
@@ -5283,7 +5283,7 @@ dependencies = [
 
 [[package]]
 name = "whimpr-audio"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "cpal",
@@ -5291,7 +5291,7 @@ dependencies = [
 
 [[package]]
 name = "whimpr-cleanup"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "hound",
@@ -5303,7 +5303,7 @@ dependencies = [
 
 [[package]]
 name = "whimpr-core"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -5315,7 +5315,7 @@ dependencies = [
 
 [[package]]
 name = "whimpr-llm-worker"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "llama-cpp-2",
@@ -5325,7 +5325,7 @@ dependencies = [
 
 [[package]]
 name = "whimpr-tauri"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "arboard",

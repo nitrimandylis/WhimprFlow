@@ -9,7 +9,7 @@ import {
   onModelDone,
   openModelsFolder,
   type ModelInfo,
-  PTT_KEYS,
+  pttOptions,
   requestAccessibility,
   requestInputMonitoring,
   requestMicrophone,
@@ -22,6 +22,7 @@ import {
   type Settings,
   type Status as StatusT,
 } from "./api";
+import { usePlatform, type Platform } from "../platform";
 
 const APPEARANCES: { value: Appearance; label: string }[] = [
   { value: "system", label: "Match system" },
@@ -29,17 +30,21 @@ const APPEARANCES: { value: Appearance; label: string }[] = [
   { value: "dark", label: "Dark" },
 ];
 
-const ASR_MODES: { value: AsrMode; label: string }[] = [
-  { value: "local", label: "On this Mac" },
-  { value: "cloud", label: "Cloud" },
-];
+function asrModes(platform: Platform): { value: AsrMode; label: string }[] {
+  return [
+    { value: "local", label: platform === "macos" ? "On this Mac" : "On this computer" },
+    { value: "cloud", label: "Cloud" },
+  ];
+}
 
-const MODES: { value: CleanupMode; label: string }[] = [
-  { value: "raw", label: "Off" },
-  { value: "local", label: "On this Mac" },
-  { value: "open_ai", label: "OpenAI" },
-  { value: "anthropic", label: "Anthropic" },
-];
+function cleanupModes(platform: Platform): { value: CleanupMode; label: string }[] {
+  return [
+    { value: "raw", label: "Off" },
+    { value: "local", label: platform === "macos" ? "On this Mac" : "On this computer" },
+    { value: "open_ai", label: "OpenAI" },
+    { value: "anthropic", label: "Anthropic" },
+  ];
+}
 
 const LEVELS: { value: CleanupLevel; label: string }[] = [
   { value: "none", label: "None" },
@@ -66,11 +71,14 @@ function keyNameFromCode(code: string): string | null {
 
 // A KeyboardEvent as a Tauri accelerator string, or null until a modifier
 // plus a real key is down. A bare key makes a terrible global hotkey.
-function acceleratorFromEvent(e: KeyboardEvent): string | null {
+// On macOS the meta key is Command (recorded as CmdOrCtrl); on Windows it is
+// the Win key, which must be recorded as "Super" — "CmdOrCtrl" would parse as
+// Ctrl there and register a different chord than the one the user pressed.
+function acceleratorFromEvent(e: KeyboardEvent, platform: Platform): string | null {
   const key = keyNameFromCode(e.code);
   if (!key) return null;
   const parts: string[] = [];
-  if (e.metaKey) parts.push("CmdOrCtrl");
+  if (e.metaKey) parts.push(platform === "macos" ? "CmdOrCtrl" : "Super");
   if (e.ctrlKey) parts.push("Ctrl");
   if (e.altKey) parts.push("Alt");
   if (e.shiftKey) parts.push("Shift");
@@ -79,25 +87,34 @@ function acceleratorFromEvent(e: KeyboardEvent): string | null {
   return parts.join("+");
 }
 
-const SYMBOLS: Record<string, string> = {
-  CmdOrCtrl: "⌘", Cmd: "⌘", Command: "⌘", Super: "⌘",
+const SYMBOLS_MAC: Record<string, string> = {
+  CmdOrCtrl: "⌘", Cmd: "⌘", Command: "⌘", Super: "⌘", Meta: "⌘",
   Ctrl: "⌃", Control: "⌃", Alt: "⌥", Option: "⌥", Shift: "⇧",
 };
 
-function prettyAccelerator(accelerator: string): string {
+// No Apple symbols on Windows: ⌘ doesn't exist there and ⌃ reads as the Mac
+// Control glyph. Plain text matches what the OS actually calls each key.
+const SYMBOLS_WINDOWS: Record<string, string> = {
+  CmdOrCtrl: "Ctrl", Cmd: "Win", Command: "Win", Super: "Win", Meta: "Win",
+  Ctrl: "Ctrl", Control: "Ctrl", Alt: "Alt", Option: "Alt", Shift: "Shift",
+};
+
+function prettyAccelerator(accelerator: string, platform: Platform): string {
   if (!accelerator.trim()) return "None";
-  return accelerator.split("+").map((p) => SYMBOLS[p] ?? p).join(" ");
+  const symbols = platform === "macos" ? SYMBOLS_MAC : SYMBOLS_WINDOWS;
+  return accelerator.split("+").map((p) => symbols[p] ?? p).join(" ");
 }
 
 function HotkeyRecorder({ value, onChange }: { value: string; onChange: (a: string) => void }) {
   const [recording, setRecording] = useState(false);
+  const platform = usePlatform();
   useEffect(() => {
     if (!recording) return;
     const onKeyDown = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
       if (e.key === "Escape") return setRecording(false);
-      const acc = acceleratorFromEvent(e);
+      const acc = acceleratorFromEvent(e, platform);
       if (acc) {
         onChange(acc);
         setRecording(false);
@@ -105,11 +122,11 @@ function HotkeyRecorder({ value, onChange }: { value: string; onChange: (a: stri
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [recording, onChange]);
+  }, [recording, onChange, platform]);
   return (
     <>
       {value.trim() !== "" && !recording && <Button variant="plain" onClick={() => onChange("")}>Remove</Button>}
-      <Button onClick={() => setRecording((on) => !on)}>{recording ? "Press keys…" : prettyAccelerator(value)}</Button>
+      <Button onClick={() => setRecording((on) => !on)}>{recording ? "Press keys…" : prettyAccelerator(value, platform)}</Button>
     </>
   );
 }
@@ -125,10 +142,11 @@ function KeyRow({
 }) {
   const [value, setValue] = useState("");
   const [error, setError] = useState(false);
+  const platform = usePlatform();
   return (
     <Row
       label={label}
-      hint={error ? "Could not save. The keychain may be unavailable." : configured ? "Saved in the macOS keychain." : "Not set."}
+      hint={error ? "Could not save. The keychain may be unavailable." : configured ? (platform === "macos" ? "Saved in the macOS keychain." : "Saved in your keychain.") : "Not set."}
     >
       <input
         type="password"
@@ -234,6 +252,7 @@ export function SettingsPane({
 }) {
   const [mics, setMics] = useState<string[]>([]);
   const [models, setModels] = useState<ModelInfo[]>([]);
+  const platform = usePlatform();
   useEffect(() => {
     void listMicrophones().then(setMics);
     void listModels().then(setModels);
@@ -256,8 +275,15 @@ export function SettingsPane({
         <div className="form">
           <GroupTitle>Dictation</GroupTitle>
           <Group>
-            <Row label="Hold to talk" hint="Only modifier keys work here. If double-tapping fn opens Apple Dictation, turn that off in System Settings › Keyboard.">
-              <Select label="Hold to talk key" value={settings.push_to_talk_key} options={PTT_KEYS} onChange={(v) => set("push_to_talk_key", v)} />
+            <Row
+              label="Hold to talk"
+              hint={
+                platform === "macos"
+                  ? "Only modifier keys work here. If double-tapping fn opens Apple Dictation, turn that off in System Settings › Keyboard."
+                  : "Only modifier keys work here. Hold the right Ctrl key and speak."
+              }
+            >
+              <Select label="Hold to talk key" value={settings.push_to_talk_key} options={pttOptions(platform)} onChange={(v) => set("push_to_talk_key", v)} />
             </Row>
             <Row label="Hands-free shortcut" hint="Press once to start, again to stop. Double-tapping the key above also works.">
               <HotkeyRecorder value={settings.hands_free_hotkey ?? ""} onChange={(a) => set("hands_free_hotkey", a)} />
@@ -275,8 +301,17 @@ export function SettingsPane({
 
           <GroupTitle>Speech to text</GroupTitle>
           <Group>
-            <Row label="Engine" hint={settings.asr_mode === "local" ? "Whisper runs on this Mac. Works offline." : "An OpenAI-compatible transcription API, such as Groq."}>
-              <Select label="Speech engine" value={settings.asr_mode} options={ASR_MODES} onChange={(v) => set("asr_mode", v)} />
+            <Row
+              label="Engine"
+              hint={
+                settings.asr_mode === "local"
+                  ? platform === "macos"
+                    ? "Whisper runs on this Mac. Works offline."
+                    : "Whisper runs on this computer. Works offline."
+                  : "An OpenAI-compatible transcription API, such as Groq."
+              }
+            >
+              <Select label="Speech engine" value={settings.asr_mode} options={asrModes(platform)} onChange={(v) => set("asr_mode", v)} />
             </Row>
             {settings.asr_mode === "local" && (
               <>
@@ -316,7 +351,7 @@ export function SettingsPane({
           <GroupTitle>Cleanup</GroupTitle>
           <Group>
             <Row label="Engine" hint="Removes fillers, applies self-corrections, adds punctuation.">
-              <Select label="Cleanup engine" value={settings.cleanup_mode} options={MODES} onChange={(v) => set("cleanup_mode", v)} />
+              <Select label="Cleanup engine" value={settings.cleanup_mode} options={cleanupModes(platform)} onChange={(v) => set("cleanup_mode", v)} />
             </Row>
             {settings.cleanup_mode !== "raw" && (
               <Row label="Strength" hint={LEVEL_HINT[settings.cleanup_level]}>
@@ -366,7 +401,7 @@ export function SettingsPane({
             <Row label="Follow the active display" hint="Otherwise it stays on the main display.">
               <Switch label="Follow the active display" checked={settings.pill_follows_active_display} onChange={(v) => set("pill_follows_active_display", v)} />
             </Row>
-            <Row label="Gap above the Dock" hint={`${Math.round(settings.pill_bottom_inset)} pt`}>
+            <Row label={platform === "macos" ? "Gap above the Dock" : "Gap above the taskbar"} hint={`${Math.round(settings.pill_bottom_inset)} pt`}>
               <input type="range" aria-label="Gap above the Dock" min={8} max={220} step={4} value={settings.pill_bottom_inset} onChange={(e) => set("pill_bottom_inset", Number(e.currentTarget.value))} />
             </Row>
             {settings.pill_pos && (
@@ -394,7 +429,7 @@ export function SettingsPane({
             <Row label="Show in Dock" hint="Off makes WhimprFlow a menu bar app.">
               <Switch label="Show in Dock" checked={settings.show_in_dock} onChange={(v) => set("show_in_dock", v)} />
             </Row>
-            <Row label="Keep history" hint="Stores the text of your last 500 dictations on this Mac. Off keeps only counts and timing.">
+            <Row label="Keep history" hint={platform === "macos" ? "Stores the text of your last 500 dictations on this Mac. Off keeps only counts and timing." : "Stores the text of your last 500 dictations on this computer. Off keeps only counts and timing."}>
               <Switch label="Keep history" checked={settings.save_history} onChange={(v) => set("save_history", v)} />
             </Row>
           </Group>
@@ -429,7 +464,7 @@ export function SettingsPane({
               }}
             />
           </Group>
-          <Note>Status updates within a few seconds of a change in System Settings.</Note>
+          <Note>{platform === "macos" ? "Status updates within a few seconds of a change in System Settings." : "Status updates within a few seconds of a change in system settings."}</Note>
         </div>
       </div>
     </>

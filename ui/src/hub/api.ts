@@ -2,6 +2,8 @@
 // without the shell) the invoke import fails and we fall back to defaults so the
 // Hub still renders for iteration.
 
+import type { Platform } from "../platform";
+
 export type CleanupMode = "raw" | "local" | "open_ai" | "anthropic";
 export type CleanupLevel = "none" | "light" | "medium" | "high";
 export type AsrMode = "local" | "cloud";
@@ -63,6 +65,32 @@ export const PTT_KEYS: { value: PushToTalkKey; label: string }[] = [
   { value: "right_option", label: "Right ⌥" },
   { value: "right_control", label: "Right ⌃" },
 ];
+
+// Windows only implements Right Control as the push-to-talk key (see
+// `PTT_VK` in src-tauri/src/win.rs), so no Mac key may ever be offered or
+// displayed there. Rust already normalizes `push_to_talk_key` to
+// `right_control` on read, so these labels only matter for that value.
+const PTT_LABEL_MAC: Record<PushToTalkKey, string> = {
+  fn: "Fn / Globe",
+  right_command: "Right ⌘",
+  right_option: "Right ⌥",
+  right_control: "Right ⌃",
+};
+
+const PTT_LABEL_WINDOWS: Record<PushToTalkKey, string> = {
+  fn: "fn",
+  right_command: "Right command",
+  right_option: "Right option",
+  right_control: "Right Control",
+};
+
+export function pttOptions(platform: Platform): { value: PushToTalkKey; label: string }[] {
+  return platform === "windows" ? [{ value: "right_control", label: "Right Control" }] : PTT_KEYS;
+}
+
+export function pttLabel(platform: Platform): Record<PushToTalkKey, string> {
+  return platform === "windows" ? PTT_LABEL_WINDOWS : PTT_LABEL_MAC;
+}
 
 // Whisper's own language codes. "auto" lets the model detect, which costs a
 // little accuracy but handles code-switching mid-sentence.
