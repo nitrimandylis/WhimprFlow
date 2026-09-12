@@ -463,7 +463,7 @@ export function FlowBar() {
               }}
             >
               <span>Dictate</span>
-              <b style={{ fontWeight: 700 }}>{pttLabel(platform)[settings?.push_to_talk_key ?? "right_control"]}</b>
+              <b style={{ fontWeight: 700 }}>{pttLabel(platform)[settings?.push_to_talk_key ?? (platform === "windows" ? "right_control" : "fn")]}</b>
             </div>
           ) : null
         ) : recording ? (
