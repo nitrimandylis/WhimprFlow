@@ -20,7 +20,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": ["app", "dmg", "nsis"],
     "externalBin": ["binaries/whimpr-llm-worker"],
     "resources": ["icons/tray.png"],
     "icon": [

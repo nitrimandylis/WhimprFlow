@@ -1,0 +1,128 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to upload assets to (e.g. v1.1.0)"
+        required: true
+        type: string
+
+jobs:
+  build-macos:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install CMake
+        run: brew install cmake
+
+      - name: Install frontend deps
+        working-directory: ui
+        run: pnpm install --frozen-lockfile || pnpm install
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Build frontend
+        working-directory: ui
+        run: pnpm run build
+
+      - name: Build LLM worker sidecar
+        run: |
+          cargo build --release -p whimpr-llm-worker --target aarch64-apple-darwin
+          mkdir -p src-tauri/binaries
+          cp target/aarch64-apple-darwin/release/whimpr-llm-worker \
+             src-tauri/binaries/whimpr-llm-worker-aarch64-apple-darwin
+
+      - name: Build app + DMG
+        run: |
+          cd src-tauri
+          cargo tauri build --target aarch64-apple-darwin --bundles dmg \
+            --config '{"build":{"beforeBuildCommand":""}}'
+
+      - name: Upload DMG to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          dmg=$(find target -name "*.dmg" -type f | head -1)
+          if [ -z "$dmg" ]; then echo "No DMG found"; exit 1; fi
+          gh release upload "${{ inputs.tag }}" "$dmg" --clobber
+
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Install frontend deps
+        working-directory: ui
+        run: pnpm install --frozen-lockfile || pnpm install
+
+      - name: Build frontend
+        working-directory: ui
+        run: pnpm run build
+
+      - name: Build LLM worker sidecar
+        run: |
+          cargo build --release -p whimpr-llm-worker --target x86_64-pc-windows-msvc
+          New-Item -ItemType Directory -Force -Path src-tauri/binaries | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/whimpr-llm-worker.exe `
+            src-tauri/binaries/whimpr-llm-worker-x86_64-pc-windows-msvc.exe
+
+      - name: Build app + installer
+        run: |
+          cd src-tauri
+          cargo tauri build --target x86_64-pc-windows-msvc --bundles nsis `
+            --config '{"build":{"beforeBuildCommand":""}}'
+
+      - name: Upload installer to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $exe = Get-ChildItem -Recurse -Filter "*.exe" target\*\release\bundle\nsis | Select-Object -First 1
+          if (!$exe) { Write-Error "No NSIS installer found"; exit 1 }
+          gh release upload "${{ inputs.tag }}" $exe.FullName --clobber
