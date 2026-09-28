@@ -55,6 +55,10 @@ export interface Settings {
   appearance: Appearance;
   // Local Whisper model filename. Empty = auto-pick best installed.
   whisper_model: string;
+  // Hub/overlay interface language. "system" follows the OS locale (falling
+  // back to English if unsupported); otherwise a supported code like "es".
+  // Distinct from `language`, which is the Whisper dictation language.
+  ui_language: string;
 }
 
 export type PushToTalkKey = "fn" | "right_command" | "right_option" | "right_control";
@@ -211,7 +215,16 @@ export const DEFAULT_SETTINGS: Settings = {
   save_history: true,
   appearance: "system",
   whisper_model: "",
+  ui_language: "system",
 };
+
+// Interface languages the Hub/overlay ship translations for. "system" follows
+// the OS locale, falling back to English for anything not in this list.
+export const UI_LANGUAGES: { value: string; label: string }[] = [
+  { value: "system", label: "Follow system" },
+  { value: "en", label: "English" },
+  { value: "es", label: "Español" },
+];
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");

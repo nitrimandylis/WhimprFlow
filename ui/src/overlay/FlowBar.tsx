@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { palette, pillFill, geometry, font } from "../tokens/values";
 import { LANGUAGES, pttLabel, type Settings } from "../hub/api";
 import { usePlatform } from "../platform";
+import { useT } from "../i18n";
 
 // Visual states, mirroring the Rust `BarState`.
 export type BarState =
@@ -103,9 +104,10 @@ function buttonHandlers(onActivate: () => void) {
 }
 
 function CancelButton() {
+  const t = useT();
   return (
     <div
-      title="Cancel (Esc)"
+      title={t("overlay.cancel")}
       className="pill-btn"
       {...buttonHandlers(() => void pillCommand("pill_cancel"))}
       style={{
@@ -129,9 +131,10 @@ function CancelButton() {
 }
 
 function StopButton() {
+  const t = useT();
   return (
     <div
-      title="Stop and insert"
+      title={t("overlay.stopInsert")}
       className="pill-btn"
       {...buttonHandlers(() => void pillCommand("pill_stop"))}
       style={{
@@ -155,11 +158,11 @@ function StopButton() {
 // Shown below the pill on hover. Rust toggles ignoresMouseEvents so these
 // receive real clicks without the pill stealing focus at rest.
 
-const CLEANUP_OPTIONS = [
-  { value: "raw", label: "Raw" },
-  { value: "local", label: "Local" },
-  { value: "open_ai", label: "OpenAI" },
-  { value: "anthropic", label: "Claude" },
+const CLEANUP_OPTION_KEYS = [
+  { value: "raw", labelKey: "overlay.cleanup.raw" },
+  { value: "local", labelKey: "overlay.cleanup.local" },
+  { value: "open_ai", labelKey: "overlay.cleanup.openai" },
+  { value: "anthropic", labelKey: "overlay.cleanup.claude" },
 ] as const;
 
 async function invokeSafe<T>(cmd: string, args?: Record<string, unknown>): Promise<T | undefined> {
@@ -282,19 +285,21 @@ function GearIcon() {
 }
 
 function QuickControls({ settings, onChange }: { settings: Settings; onChange: (s: Settings) => void }) {
+  const t = useT();
   const [mics, setMics] = useState<string[]>([]);
   useEffect(() => {
     void invokeSafe<string[]>("list_microphones").then((m) => setMics(m ?? []));
   }, []);
-  const micOptions = [{ value: "", label: "System default" }, ...mics.map((m) => ({ value: m, label: m }))];
+  const micOptions = [{ value: "", label: t("common.systemDefault") }, ...mics.map((m) => ({ value: m, label: m }))];
+  const cleanupOptions = CLEANUP_OPTION_KEYS.map((c) => ({ value: c.value, label: t(c.labelKey) }));
   const lang = LANGUAGES.find((l) => l.value === settings.language);
-  const cleanup = CLEANUP_OPTIONS.find((c) => c.value === settings.cleanup_mode);
+  const cleanup = cleanupOptions.find((c) => c.value === settings.cleanup_mode);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, pointerEvents: "auto" }}>
       <Chip
         icon={<MicIcon />}
-        text={settings.microphone || "Default"}
-        title="Microphone"
+        text={settings.microphone || t("common.default")}
+        title={t("common.microphone")}
         value={settings.microphone}
         options={micOptions}
         onChange={(v) => onChange({ ...settings, microphone: v })}
@@ -302,8 +307,8 @@ function QuickControls({ settings, onChange }: { settings: Settings; onChange: (
       />
       <Chip
         icon={<GlobeIcon />}
-        text={settings.language === "auto" ? "Auto" : settings.language.toUpperCase()}
-        title={`Language: ${lang?.label ?? settings.language}`}
+        text={settings.language === "auto" ? t("overlay.chip.autoLanguage") : settings.language.toUpperCase()}
+        title={t("overlay.chip.language", { lang: lang?.label ?? settings.language })}
         value={settings.language}
         options={LANGUAGES}
         onChange={(v) => onChange({ ...settings, language: v })}
@@ -311,13 +316,13 @@ function QuickControls({ settings, onChange }: { settings: Settings; onChange: (
       <Chip
         icon={<SparkIcon />}
         text={cleanup?.label ?? settings.cleanup_mode}
-        title="Cleanup"
+        title={t("overlay.chip.cleanupTitle")}
         value={settings.cleanup_mode}
-        options={CLEANUP_OPTIONS}
+        options={cleanupOptions}
         onChange={(v) => onChange({ ...settings, cleanup_mode: v as Settings["cleanup_mode"] })}
       />
       <div
-        title="Open settings"
+        title={t("overlay.openSettings")}
         className="qc-chip"
         {...buttonHandlers(() => void invokeSafe("open_hub_settings"))}
         style={{ ...chipStyle, width: 30, padding: 0, justifyContent: "center" }}
@@ -329,6 +334,7 @@ function QuickControls({ settings, onChange }: { settings: Settings; onChange: (
 }
 
 export function FlowBar() {
+  const t = useT();
   const [state, setState] = useState<BarState>("idle");
   const [bars, setBars] = useState<number[]>([]);
   const [errorText, setErrorText] = useState<ErrorEvent | null>(null);
@@ -389,12 +395,12 @@ export function FlowBar() {
   const isError = state === "error";
   const statusText =
     state === "transcribing"
-      ? "Cleaning up…"
+      ? t("overlay.status.cleaning")
       : isError
-        ? errorText?.headline ?? "Something's off"
+        ? errorText?.headline ?? t("overlay.status.error")
         : state === "cancelled"
-          ? "Discarded"
-          : "Done";
+          ? t("overlay.status.cancelled")
+          : t("common.done");
 
   const dims = isIdle
     ? hover
@@ -462,7 +468,7 @@ export function FlowBar() {
                 fontWeight: 500,
               }}
             >
-              <span>Dictate</span>
+              <span>{t("overlay.dictate")}</span>
               <b style={{ fontWeight: 700 }}>{pttLabel(platform)[settings?.push_to_talk_key ?? (platform === "windows" ? "right_control" : "fn")]}</b>
             </div>
           ) : null

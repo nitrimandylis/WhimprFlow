@@ -9,6 +9,7 @@ import { StylePane } from "./StylePane";
 import { Help } from "./Help";
 import { Button } from "./ui";
 import { gsap, prefersReduced, EASE } from "./anim";
+import { I18nProvider, useT } from "../i18n";
 import {
   getSettings,
   setSettings,
@@ -42,6 +43,7 @@ function ErrorBanner({
   onAction?: () => void;
   onDismiss: () => void;
 }) {
+  const t = useT();
   return (
     <div className="banner">
       <div className="banner-text">
@@ -49,7 +51,7 @@ function ErrorBanner({
         <span>{detail}</span>
       </div>
       {actionLabel && onAction && <Button variant="danger" onClick={onAction}>{actionLabel}</Button>}
-      <Button variant="plain" onClick={onDismiss} title="Dismiss">✕</Button>
+      <Button variant="plain" onClick={onDismiss} title={t("common.dismiss")}>✕</Button>
     </div>
   );
 }
@@ -197,10 +199,60 @@ export function App() {
   // Show onboarding when permissions are missing OR no model is installed.
   // The model check overrides `entered`: a deleted model needs re-onboarding
   // even if the user completed setup before.
-  if (hasModel === false || (!(status.accessibility && status.microphone) && !entered)) {
-    return <Onboarding status={status} refresh={refresh} onEnter={markEntered} />;
-  }
+  const needsOnboarding = hasModel === false || (!(status.accessibility && status.microphone) && !entered);
 
+  return (
+    <I18nProvider uiLanguage={settings.ui_language}>
+      {needsOnboarding ? (
+        <Onboarding status={status} refresh={refresh} onEnter={markEntered} />
+      ) : (
+        <Shell
+          page={page}
+          setPage={setPage}
+          settings={settings}
+          status={status}
+          entered={entered}
+          accSince={accSince}
+          lastError={lastError}
+          errorDismissed={errorDismissed}
+          setErrorDismissed={setErrorDismissed}
+          update={update}
+          refresh={refresh}
+        />
+      )}
+    </I18nProvider>
+  );
+}
+
+// Split out so its `useT()` call sits inside the `I18nProvider` above (the
+// resolved locale depends on `settings.ui_language`, which is only known once
+// settings have loaded: see `App`).
+function Shell({
+  page,
+  setPage,
+  settings,
+  status,
+  entered,
+  accSince,
+  lastError,
+  errorDismissed,
+  setErrorDismissed,
+  update,
+  refresh,
+}: {
+  page: Page;
+  setPage: (p: Page) => void;
+  settings: Settings;
+  status: Status;
+  entered: boolean;
+  accSince: number | null;
+  lastError: LastError | null;
+  errorDismissed: boolean;
+  setErrorDismissed: (v: boolean) => void;
+  update: (s: Settings) => void;
+  refresh: () => void;
+}) {
+  const t = useT();
   const accessibilityLapsed = entered && !status.accessibility;
   const staleWired =
     entered && status.accessibility && !status.hotkey_wired && accSince !== null && Date.now() - accSince > 10000;
@@ -208,16 +260,16 @@ export function App() {
     ? null
     : accessibilityLapsed
       ? {
-          headline: "Accessibility permission needed",
-          detail: "WhimprFlow can no longer type into other apps.",
-          actionLabel: "Grant",
+          headline: t("app.banner.accessibility.headline"),
+          detail: t("app.banner.accessibility.detail"),
+          actionLabel: t("common.grant"),
           onAction: () => requestAccessibility(),
         }
       : staleWired
         ? {
-            headline: "Dictation key is not wired up",
-            detail: "macOS still holds a permission entry for an older build. Fix clears it and reopens the pane.",
-            actionLabel: "Fix",
+            headline: t("app.banner.staleWired.headline"),
+            detail: t("app.banner.staleWired.detail"),
+            actionLabel: t("common.fix"),
             onAction: () => void fixAccessibility(),
           }
         : lastError

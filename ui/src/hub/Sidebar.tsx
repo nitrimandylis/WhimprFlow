@@ -1,26 +1,28 @@
 import { Icon, type IconName } from "./icons";
+import { useT } from "../i18n";
 
 export type Page = "history" | "insights" | "dictionary" | "style" | "settings" | "help";
 
-type NavDef = { key: Page; label: string; icon: IconName };
+type NavDef = { key: Page; labelKey: string; icon: IconName };
 
 const MAIN: NavDef[] = [
-  { key: "history", label: "History", icon: "history" },
-  { key: "insights", label: "Insights", icon: "insights" },
-  { key: "dictionary", label: "Dictionary", icon: "dictionary" },
-  { key: "style", label: "Style", icon: "style" },
+  { key: "history", labelKey: "sidebar.nav.history", icon: "history" },
+  { key: "insights", labelKey: "sidebar.nav.insights", icon: "insights" },
+  { key: "dictionary", labelKey: "sidebar.nav.dictionary", icon: "dictionary" },
+  { key: "style", labelKey: "sidebar.nav.style", icon: "style" },
 ];
 
 const BOTTOM: NavDef[] = [
-  { key: "settings", label: "Settings", icon: "settings" },
-  { key: "help", label: "Help", icon: "help" },
+  { key: "settings", labelKey: "sidebar.nav.settings", icon: "settings" },
+  { key: "help", labelKey: "sidebar.nav.help", icon: "help" },
 ];
 
 function NavItem({ item, active, onClick }: { item: NavDef; active: boolean; onClick: () => void }) {
+  const t = useT();
   return (
     <button className="nav-item" aria-current={active ? "page" : undefined} onClick={onClick}>
       <Icon name={item.icon} size={16} strokeWidth={1.8} />
-      {item.label}
+      {t(item.labelKey)}
     </button>
   );
 }

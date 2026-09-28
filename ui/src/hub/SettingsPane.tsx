@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button, Group, GroupTitle, Note, PageHeader, Row, Select, Status, Switch } from "./ui";
+import { useT, type T } from "../i18n";
 import {
   LANGUAGES,
   listMicrophones,
@@ -15,6 +16,7 @@ import {
   requestMicrophone,
   resetPillPosition,
   setApiKey,
+  UI_LANGUAGES,
   type Appearance,
   type AsrMode,
   type CleanupLevel,
@@ -24,41 +26,47 @@ import {
 } from "./api";
 import { usePlatform, type Platform } from "../platform";
 
-const APPEARANCES: { value: Appearance; label: string }[] = [
-  { value: "system", label: "Match system" },
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
-];
-
-function asrModes(platform: Platform): { value: AsrMode; label: string }[] {
+function appearances(t: T): { value: Appearance; label: string }[] {
   return [
-    { value: "local", label: platform === "macos" ? "On this Mac" : "On this computer" },
-    { value: "cloud", label: "Cloud" },
+    { value: "system", label: t("common.matchSystem") },
+    { value: "light", label: t("settings.appearance.light") },
+    { value: "dark", label: t("settings.appearance.dark") },
   ];
 }
 
-function cleanupModes(platform: Platform): { value: CleanupMode; label: string }[] {
+function asrModes(t: T, platform: Platform): { value: AsrMode; label: string }[] {
   return [
-    { value: "raw", label: "Off" },
-    { value: "local", label: platform === "macos" ? "On this Mac" : "On this computer" },
-    { value: "open_ai", label: "OpenAI" },
-    { value: "anthropic", label: "Anthropic" },
+    { value: "local", label: platform === "macos" ? t("common.onThisMac") : t("common.onThisComputer") },
+    { value: "cloud", label: t("settings.asr.engine.cloud") },
   ];
 }
 
-const LEVELS: { value: CleanupLevel; label: string }[] = [
-  { value: "none", label: "None" },
-  { value: "light", label: "Light" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-];
+function cleanupModes(t: T, platform: Platform): { value: CleanupMode; label: string }[] {
+  return [
+    { value: "raw", label: t("settings.cleanup.engine.off") },
+    { value: "local", label: platform === "macos" ? t("common.onThisMac") : t("common.onThisComputer") },
+    { value: "open_ai", label: t("settings.cleanup.engine.openai") },
+    { value: "anthropic", label: t("settings.cleanup.engine.anthropic") },
+  ];
+}
 
-const LEVEL_HINT: Record<CleanupLevel, string> = {
-  none: "Types exactly what was heard, mistakes included.",
-  light: "Removes fillers and fixes grammar. Leaves wording alone.",
-  medium: "Also edits for clarity and length.",
-  high: "Rewrites for brevity and polish.",
-};
+function levels(t: T): { value: CleanupLevel; label: string }[] {
+  return [
+    { value: "none", label: t("settings.cleanup.level.none") },
+    { value: "light", label: t("settings.cleanup.level.light") },
+    { value: "medium", label: t("settings.cleanup.level.medium") },
+    { value: "high", label: t("settings.cleanup.level.high") },
+  ];
+}
+
+function levelHint(t: T): Record<CleanupLevel, string> {
+  return {
+    none: t("settings.cleanup.level.none.hint"),
+    light: t("settings.cleanup.level.light.hint"),
+    medium: t("settings.cleanup.level.medium.hint"),
+    high: t("settings.cleanup.level.high.hint"),
+  };
+}
 
 // A physical key from a KeyboardEvent.code, as a Tauri accelerator key name.
 function keyNameFromCode(code: string): string | null {
@@ -99,13 +107,14 @@ const SYMBOLS_WINDOWS: Record<string, string> = {
   Ctrl: "Ctrl", Control: "Ctrl", Alt: "Alt", Option: "Alt", Shift: "Shift",
 };
 
-function prettyAccelerator(accelerator: string, platform: Platform): string {
-  if (!accelerator.trim()) return "None";
+function prettyAccelerator(accelerator: string, platform: Platform, t: T): string {
+  if (!accelerator.trim()) return t("common.none");
   const symbols = platform === "macos" ? SYMBOLS_MAC : SYMBOLS_WINDOWS;
   return accelerator.split("+").map((p) => symbols[p] ?? p).join(" ");
 }
 
 function HotkeyRecorder({ value, onChange }: { value: string; onChange: (a: string) => void }) {
+  const t = useT();
   const [recording, setRecording] = useState(false);
   const platform = usePlatform();
   useEffect(() => {
@@ -125,8 +134,8 @@ function HotkeyRecorder({ value, onChange }: { value: string; onChange: (a: stri
   }, [recording, onChange, platform]);
   return (
     <>
-      {value.trim() !== "" && !recording && <Button variant="plain" onClick={() => onChange("")}>Remove</Button>}
-      <Button onClick={() => setRecording((on) => !on)}>{recording ? "Press keys…" : prettyAccelerator(value, platform)}</Button>
+      {value.trim() !== "" && !recording && <Button variant="plain" onClick={() => onChange("")}>{t("common.remove")}</Button>}
+      <Button onClick={() => setRecording((on) => !on)}>{recording ? t("settings.hotkey.recording") : prettyAccelerator(value, platform, t)}</Button>
     </>
   );
 }
@@ -140,19 +149,28 @@ function KeyRow({
   configured: boolean;
   onSave: (key: string) => Promise<void>;
 }) {
+  const t = useT();
   const [value, setValue] = useState("");
   const [error, setError] = useState(false);
   const platform = usePlatform();
   return (
     <Row
       label={label}
-      hint={error ? "Could not save. The keychain may be unavailable." : configured ? (platform === "macos" ? "Saved in the macOS keychain." : "Saved in your keychain.") : "Not set."}
+      hint={
+        error
+          ? t("settings.apiKey.hint.error")
+          : configured
+            ? platform === "macos"
+              ? t("settings.apiKey.hint.savedMac")
+              : t("settings.apiKey.hint.savedOther")
+            : t("settings.apiKey.hint.notSet")
+      }
     >
       <input
         type="password"
         className="mono"
         value={value}
-        placeholder={configured ? "Replace key" : "Paste key"}
+        placeholder={configured ? t("settings.apiKey.placeholder.replace") : t("settings.apiKey.placeholder.paste")}
         onChange={(e) => {
           setValue(e.target.value);
           setError(false);
@@ -170,21 +188,23 @@ function KeyRow({
           }
         }}
       >
-        Save
+        {t("common.save")}
       </Button>
     </Row>
   );
 }
 
 function PermRow({ ok, label, detail, onClick }: { ok: boolean; label: string; detail: string; onClick: () => void }) {
+  const t = useT();
   return (
     <Row label={label} hint={detail}>
-      {ok ? <Status ok>Granted</Status> : <Button onClick={onClick}>Grant</Button>}
+      {ok ? <Status ok>{t("common.granted")}</Status> : <Button onClick={onClick}>{t("common.grant")}</Button>}
     </Row>
   );
 }
 
 function ModelDownloadButton({ models, onDone }: { models: ModelInfo[]; onDone: () => void }) {
+  const t = useT();
   const [selected, setSelected] = useState("");
   const [downloading, setDownloading] = useState(false);
   const [percent, setPercent] = useState(0);
@@ -212,7 +232,7 @@ function ModelDownloadButton({ models, onDone }: { models: ModelInfo[]; onDone: 
           onChange={(e) => setSelected(e.target.value)}
           style={{ fontSize: 13, borderRadius: 6, padding: "3px 6px" }}
         >
-          <option value="">Download a model</option>
+          <option value="">{t("settings.model.downloadPlaceholder")}</option>
           {notInstalled.map((m) => (
             <option key={m.name} value={m.name}>
               {m.label} ({m.size_mb >= 1000 ? `${(m.size_mb / 1000).toFixed(1)} GB` : `${m.size_mb} MB`})
@@ -232,7 +252,7 @@ function ModelDownloadButton({ models, onDone }: { models: ModelInfo[]; onDone: 
             void downloadModel(selected);
           }}
         >
-          Download
+          {t("common.download")}
         </Button>
       )}
     </div>
@@ -250,6 +270,7 @@ export function SettingsPane({
   status: StatusT;
   refresh: () => void;
 }) {
+  const t = useT();
   const [mics, setMics] = useState<string[]>([]);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const platform = usePlatform();
@@ -257,10 +278,10 @@ export function SettingsPane({
     void listMicrophones().then(setMics);
     void listModels().then(setModels);
   }, []);
-  const micOptions = [{ value: "", label: "System default" }, ...mics.map((m) => ({ value: m, label: m }))];
+  const micOptions = [{ value: "", label: t("common.systemDefault") }, ...mics.map((m) => ({ value: m, label: m }))];
   const installedModels = models.filter((m) => m.installed);
   const modelOptions = [
-    { value: "", label: "Auto (best installed)" },
+    { value: "", label: t("settings.model.autoOption") },
     ...installedModels.map((m) => ({
       value: m.name,
       label: `${m.label} (${m.size_mb >= 1000 ? `${(m.size_mb / 1000).toFixed(1)} GB` : `${m.size_mb} MB`})`,
@@ -270,59 +291,59 @@ export function SettingsPane({
 
   return (
     <>
-      <PageHeader title="Settings" />
+      <PageHeader title={t("sidebar.nav.settings")} />
       <div className="pane-scroll">
         <div className="form">
-          <GroupTitle>Dictation</GroupTitle>
+          <GroupTitle>{t("settings.group.dictation")}</GroupTitle>
           <Group>
             <Row
-              label="Hold to talk"
+              label={t("settings.row.holdToTalk.label")}
               hint={
                 platform === "macos"
-                  ? "Only modifier keys work here. If double-tapping fn opens Apple Dictation, turn that off in System Settings › Keyboard."
-                  : "Only modifier keys work here. Hold the right Ctrl key and speak."
+                  ? t("settings.row.holdToTalk.hint.mac")
+                  : t("settings.row.holdToTalk.hint.other")
               }
             >
-              <Select label="Hold to talk key" value={settings.push_to_talk_key} options={pttOptions(platform)} onChange={(v) => set("push_to_talk_key", v)} />
+              <Select label={t("settings.row.holdToTalk.selectLabel")} value={settings.push_to_talk_key} options={pttOptions(platform)} onChange={(v) => set("push_to_talk_key", v)} />
             </Row>
-            <Row label="Hands-free shortcut" hint="Press once to start, again to stop. Double-tapping the key above also works.">
+            <Row label={t("settings.row.handsFree.label")} hint={t("settings.row.handsFree.hint")}>
               <HotkeyRecorder value={settings.hands_free_hotkey ?? ""} onChange={(a) => set("hands_free_hotkey", a)} />
             </Row>
-            <Row label="Language" hint="Needs a multilingual model. Models ending in .en are English only.">
-              <Select label="Language" value={settings.language} options={LANGUAGES} onChange={(v) => set("language", v)} />
+            <Row label={t("settings.row.dictationLanguage.label")} hint={t("settings.row.dictationLanguage.hint")}>
+              <Select label={t("settings.row.dictationLanguage.label")} value={settings.language} options={LANGUAGES} onChange={(v) => set("language", v)} />
             </Row>
-            <Row label="Microphone" hint="Falls back to the system default if this device is unplugged.">
-              <Select label="Microphone" value={settings.microphone} options={micOptions} onChange={(v) => set("microphone", v)} />
+            <Row label={t("common.microphone")} hint={t("settings.row.microphone.hint")}>
+              <Select label={t("common.microphone")} value={settings.microphone} options={micOptions} onChange={(v) => set("microphone", v)} />
             </Row>
-            <Row label="Sounds" hint="A click when recording starts and when text lands.">
-              <Switch label="Sounds" checked={settings.sound_on_start} onChange={(v) => set("sound_on_start", v)} />
+            <Row label={t("settings.row.sounds.label")} hint={t("settings.row.sounds.hint")}>
+              <Switch label={t("settings.row.sounds.label")} checked={settings.sound_on_start} onChange={(v) => set("sound_on_start", v)} />
             </Row>
           </Group>
 
-          <GroupTitle>Speech to text</GroupTitle>
+          <GroupTitle>{t("settings.group.speechToText")}</GroupTitle>
           <Group>
             <Row
-              label="Engine"
+              label={t("common.engine")}
               hint={
                 settings.asr_mode === "local"
                   ? platform === "macos"
-                    ? "Whisper runs on this Mac. Works offline."
-                    : "Whisper runs on this computer. Works offline."
-                  : "An OpenAI-compatible transcription API, such as Groq."
+                    ? t("settings.row.asrEngine.hint.mac")
+                    : t("settings.row.asrEngine.hint.other")
+                  : t("settings.row.asrEngine.hint.cloud")
               }
             >
-              <Select label="Speech engine" value={settings.asr_mode} options={asrModes(platform)} onChange={(v) => set("asr_mode", v)} />
+              <Select label={t("settings.row.asrEngine.selectLabel")} value={settings.asr_mode} options={asrModes(t, platform)} onChange={(v) => set("asr_mode", v)} />
             </Row>
             {settings.asr_mode === "local" && (
               <>
                 {installedModels.length > 0 && (
-                  <Row label="Model" hint="Which Whisper model to use for transcription.">
-                    <Select label="Whisper model" value={settings.whisper_model} options={modelOptions} onChange={(v) => set("whisper_model", v)} />
+                  <Row label={t("common.model")} hint={t("settings.row.model.hint")}>
+                    <Select label={t("settings.row.model.selectLabel")} value={settings.whisper_model} options={modelOptions} onChange={(v) => set("whisper_model", v)} />
                   </Row>
                 )}
-                <Row label="Models folder" hint="Add your own .bin files here, or download one.">
+                <Row label={t("settings.row.modelsFolder.label")} hint={t("settings.row.modelsFolder.hint")}>
                   <div style={{ display: "flex", gap: 6 }}>
-                    <Button onClick={() => void openModelsFolder()}>Open folder</Button>
+                    <Button onClick={() => void openModelsFolder()}>{t("settings.row.modelsFolder.openButton")}</Button>
                     <ModelDownloadButton models={models} onDone={() => void listModels().then(setModels)} />
                   </div>
                 </Row>
@@ -330,14 +351,14 @@ export function SettingsPane({
             )}
             {settings.asr_mode === "cloud" && (
               <>
-                <Row label="Server" hint="Leave blank for OpenAI.">
+                <Row label={t("common.server")} hint={t("settings.row.asrServer.hint")}>
                   <input type="text" className="mono" value={settings.asr_base_url} placeholder="https://api.groq.com/openai/v1" onChange={(e) => set("asr_base_url", e.target.value)} style={{ width: 260 }} />
                 </Row>
-                <Row label="Model">
+                <Row label={t("common.model")}>
                   <input type="text" className="mono" value={settings.asr_model} placeholder="whisper-large-v3-turbo" onChange={(e) => set("asr_model", e.target.value)} style={{ width: 260 }} />
                 </Row>
                 <KeyRow
-                  label="API key"
+                  label={t("settings.apiKey.asr.label")}
                   configured={status.has_asr_key}
                   onSave={async (k) => {
                     await setApiKey("asr", k);
@@ -348,26 +369,26 @@ export function SettingsPane({
             )}
           </Group>
 
-          <GroupTitle>Cleanup</GroupTitle>
+          <GroupTitle>{t("settings.group.cleanup")}</GroupTitle>
           <Group>
-            <Row label="Engine" hint="Removes fillers, applies self-corrections, adds punctuation.">
-              <Select label="Cleanup engine" value={settings.cleanup_mode} options={cleanupModes(platform)} onChange={(v) => set("cleanup_mode", v)} />
+            <Row label={t("common.engine")} hint={t("settings.row.cleanupEngine.hint")}>
+              <Select label={t("settings.row.cleanupEngine.selectLabel")} value={settings.cleanup_mode} options={cleanupModes(t, platform)} onChange={(v) => set("cleanup_mode", v)} />
             </Row>
             {settings.cleanup_mode !== "raw" && (
-              <Row label="Strength" hint={LEVEL_HINT[settings.cleanup_level]}>
-                <Select label="Cleanup strength" value={settings.cleanup_level} options={LEVELS} onChange={(v) => set("cleanup_level", v)} />
+              <Row label={t("settings.row.strength.label")} hint={levelHint(t)[settings.cleanup_level]}>
+                <Select label={t("settings.row.strength.selectLabel")} value={settings.cleanup_level} options={levels(t)} onChange={(v) => set("cleanup_level", v)} />
               </Row>
             )}
             {settings.cleanup_mode === "open_ai" && (
               <>
-                <Row label="Server" hint="Leave blank for OpenAI, or any compatible API such as OpenRouter.">
+                <Row label={t("common.server")} hint={t("settings.row.openaiServer.hint")}>
                   <input type="text" className="mono" value={settings.openai_base_url} placeholder="https://openrouter.ai/api/v1" onChange={(e) => set("openai_base_url", e.target.value)} style={{ width: 260 }} />
                 </Row>
-                <Row label="Model">
+                <Row label={t("common.model")}>
                   <input type="text" className="mono" value={settings.openai_model} placeholder="gpt-4o-mini" onChange={(e) => set("openai_model", e.target.value)} style={{ width: 260 }} />
                 </Row>
                 <KeyRow
-                  label="OpenAI API key"
+                  label={t("settings.apiKey.openai.label")}
                   configured={status.has_openai_key}
                   onSave={async (k) => {
                     await setApiKey("openai", k);
@@ -378,11 +399,11 @@ export function SettingsPane({
             )}
             {settings.cleanup_mode === "anthropic" && (
               <>
-                <Row label="Model">
+                <Row label={t("common.model")}>
                   <input type="text" className="mono" value={settings.anthropic_model} placeholder="claude-haiku-4-5" onChange={(e) => set("anthropic_model", e.target.value)} style={{ width: 260 }} />
                 </Row>
                 <KeyRow
-                  label="Anthropic API key"
+                  label={t("settings.apiKey.anthropic.label")}
                   configured={status.has_anthropic_key}
                   onSave={async (k) => {
                     await setApiKey("anthropic", k);
@@ -393,53 +414,56 @@ export function SettingsPane({
             )}
           </Group>
 
-          <GroupTitle>Pill</GroupTitle>
+          <GroupTitle>{t("settings.group.pill")}</GroupTitle>
           <Group>
-            <Row label="Always show" hint="Off hides the pill until a dictation starts.">
-              <Switch label="Always show pill" checked={settings.show_pill_always} onChange={(v) => set("show_pill_always", v)} />
+            <Row label={t("settings.row.alwaysShow.label")} hint={t("settings.row.alwaysShow.hint")}>
+              <Switch label={t("settings.row.alwaysShow.switchLabel")} checked={settings.show_pill_always} onChange={(v) => set("show_pill_always", v)} />
             </Row>
-            <Row label="Follow the active display" hint="Otherwise it stays on the main display.">
-              <Switch label="Follow the active display" checked={settings.pill_follows_active_display} onChange={(v) => set("pill_follows_active_display", v)} />
+            <Row label={t("settings.row.followDisplay.label")} hint={t("settings.row.followDisplay.hint")}>
+              <Switch label={t("settings.row.followDisplay.label")} checked={settings.pill_follows_active_display} onChange={(v) => set("pill_follows_active_display", v)} />
             </Row>
-            <Row label={platform === "macos" ? "Gap above the Dock" : "Gap above the taskbar"} hint={`${Math.round(settings.pill_bottom_inset)} pt`}>
-              <input type="range" aria-label="Gap above the Dock" min={8} max={220} step={4} value={settings.pill_bottom_inset} onChange={(e) => set("pill_bottom_inset", Number(e.currentTarget.value))} />
+            <Row label={platform === "macos" ? t("settings.row.gap.labelMac") : t("settings.row.gap.labelOther")} hint={`${Math.round(settings.pill_bottom_inset)} pt`}>
+              <input type="range" aria-label={t("settings.row.gap.labelMac")} min={8} max={220} step={4} value={settings.pill_bottom_inset} onChange={(e) => set("pill_bottom_inset", Number(e.currentTarget.value))} />
             </Row>
             {settings.pill_pos && (
-              <Row label="Position" hint="Pinned where you dragged it. The options above are paused.">
+              <Row label={t("settings.row.pillPosition.label")} hint={t("settings.row.pillPosition.hint")}>
                 <Button
                   onClick={() => {
                     void resetPillPosition();
                     set("pill_pos", null);
                   }}
                 >
-                  Reset
+                  {t("common.reset")}
                 </Button>
               </Row>
             )}
           </Group>
 
-          <GroupTitle>App</GroupTitle>
+          <GroupTitle>{t("settings.group.app")}</GroupTitle>
           <Group>
-            <Row label="Appearance">
-              <Select label="Appearance" value={settings.appearance} options={APPEARANCES} onChange={(v) => set("appearance", v)} />
+            <Row label={t("settings.row.appearance.label")}>
+              <Select label={t("settings.row.appearance.label")} value={settings.appearance} options={appearances(t)} onChange={(v) => set("appearance", v)} />
             </Row>
-            <Row label="Open at login">
-              <Switch label="Open at login" checked={settings.launch_at_login} onChange={(v) => set("launch_at_login", v)} />
+            <Row label={t("settings.row.uiLanguage.label")} hint={t("settings.row.uiLanguage.hint")}>
+              <Select label={t("settings.row.uiLanguage.label")} value={settings.ui_language} options={UI_LANGUAGES} onChange={(v) => set("ui_language", v)} />
             </Row>
-            <Row label="Show in Dock" hint="Off makes WhimprFlow a menu bar app.">
-              <Switch label="Show in Dock" checked={settings.show_in_dock} onChange={(v) => set("show_in_dock", v)} />
+            <Row label={t("settings.row.launchAtLogin.label")}>
+              <Switch label={t("settings.row.launchAtLogin.label")} checked={settings.launch_at_login} onChange={(v) => set("launch_at_login", v)} />
             </Row>
-            <Row label="Keep history" hint={platform === "macos" ? "Stores the text of your last 500 dictations on this Mac. Off keeps only counts and timing." : "Stores the text of your last 500 dictations on this computer. Off keeps only counts and timing."}>
-              <Switch label="Keep history" checked={settings.save_history} onChange={(v) => set("save_history", v)} />
+            <Row label={t("settings.row.showInDock.label")} hint={t("settings.row.showInDock.hint")}>
+              <Switch label={t("settings.row.showInDock.label")} checked={settings.show_in_dock} onChange={(v) => set("show_in_dock", v)} />
+            </Row>
+            <Row label={t("settings.row.keepHistory.label")} hint={platform === "macos" ? t("settings.row.keepHistory.hint.mac") : t("settings.row.keepHistory.hint.other")}>
+              <Switch label={t("settings.row.keepHistory.label")} checked={settings.save_history} onChange={(v) => set("save_history", v)} />
             </Row>
           </Group>
 
-          <GroupTitle>Permissions</GroupTitle>
+          <GroupTitle>{t("settings.group.permissions")}</GroupTitle>
           <Group>
             <PermRow
               ok={status.accessibility}
-              label="Accessibility"
-              detail="Reads the dictation key in every app and types your words."
+              label={t("common.accessibility")}
+              detail={t("permissions.accessibility.detail")}
               onClick={() => {
                 requestAccessibility();
                 setTimeout(refresh, 800);
@@ -447,8 +471,8 @@ export function SettingsPane({
             />
             <PermRow
               ok={status.microphone}
-              label="Microphone"
-              detail={status.microphone ? "Hears what you say." : (status.microphone_hint ?? "Hears what you say.")}
+              label={t("common.microphone")}
+              detail={status.microphone ? t("common.microphoneHint") : (status.microphone_hint ?? t("common.microphoneHint"))}
               onClick={() => {
                 requestMicrophone();
                 setTimeout(refresh, 1000);
@@ -456,15 +480,15 @@ export function SettingsPane({
             />
             <PermRow
               ok={status.input_monitoring}
-              label="Input Monitoring"
-              detail="Optional. Makes key detection more reliable."
+              label={t("common.inputMonitoring")}
+              detail={t("settings.perm.inputMonitoring.detail")}
               onClick={() => {
                 requestInputMonitoring();
                 setTimeout(refresh, 1000);
               }}
             />
           </Group>
-          <Note>{platform === "macos" ? "Status updates within a few seconds of a change in System Settings." : "Status updates within a few seconds of a change in system settings."}</Note>
+          <Note>{platform === "macos" ? t("settings.note.statusUpdates.mac") : t("settings.note.statusUpdates.other")}</Note>
         </div>
       </div>
     </>

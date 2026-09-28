@@ -222,6 +222,11 @@ pub struct Settings {
     /// means auto-pick the best installed model.
     #[serde(default)]
     pub whisper_model: String,
+    /// Hub/overlay interface language: "system" follows the OS locale (falling
+    /// back to English), or a BCP-47-ish code such as "en" / "es" pins it.
+    /// Unrelated to `language`, which is the Whisper dictation language.
+    #[serde(default = "default_ui_language")]
+    pub ui_language: String,
 }
 
 /// The out-of-the-box hands-free hotkey. Chosen to match what the cofounder
@@ -234,6 +239,10 @@ pub fn default_hands_free_hotkey() -> String {
 
 fn default_language() -> String {
     "en".to_string()
+}
+
+fn default_ui_language() -> String {
+    "system".to_string()
 }
 
 fn default_true() -> bool {
@@ -272,6 +281,7 @@ impl Default for Settings {
             save_history: true,
             appearance: Appearance::default(),
             whisper_model: String::new(),
+            ui_language: default_ui_language(),
         }
     }
 }

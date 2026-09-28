@@ -1,7 +1,9 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { FlowBar } from "./FlowBar";
 import { palette } from "../tokens/values";
+import { I18nProvider } from "../i18n";
+import { getSettings, DEFAULT_SETTINGS } from "../hub/api";
 
 // The overlay window is transparent; keep the document background clear so only
 // the pill paints. (Global reset lives here rather than a CSS file to keep the
@@ -44,8 +46,24 @@ style.textContent = `
 `;
 document.head.appendChild(style);
 
+// The overlay pill has its own tiny React root, separate from the Hub, so it
+// loads `ui_language` itself rather than receiving it as a prop. Quick
+// controls re-fetch settings on hover (see FlowBar.tsx); this is only for the
+// text the pill shows even when idle (status words, tooltips, "Dictate").
+function OverlayRoot() {
+  const [uiLanguage, setUiLanguage] = useState(DEFAULT_SETTINGS.ui_language);
+  useEffect(() => {
+    void getSettings().then((s) => setUiLanguage(s.ui_language));
+  }, []);
+  return (
+    <I18nProvider uiLanguage={uiLanguage}>
+      <FlowBar />
+    </I18nProvider>
+  );
+}
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <FlowBar />
+    <OverlayRoot />
   </React.StrictMode>,
 );

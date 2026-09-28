@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button, Group, GroupTitle, Note, PageHeader } from "./ui";
+import { useT } from "../i18n";
 import type { Settings } from "./api";
 
 // Free-text style preferences, appended to the cleanup prompt so cleaned text
@@ -7,15 +8,17 @@ import type { Settings } from "./api";
 // voice profile: a half-working inference that silently reshapes writing is
 // worse than none.
 
-const EXAMPLES = [
-  "Use British spelling.",
-  "Never use em dashes.",
-  "Keep sentences short. Prefer plain words over jargon.",
-  "Write “OK”, never “okay”.",
-  "Don't start sentences with “So”.",
+const EXAMPLE_KEYS = [
+  "style.examples.britishSpelling",
+  "style.examples.noEmDash",
+  "style.examples.shortSentences",
+  "style.examples.okSpelling",
+  "style.examples.noSoStart",
 ];
 
 export function StylePane({ settings, onChange }: { settings: Settings; onChange: (s: Settings) => void }) {
+  const t = useT();
+  const examples = EXAMPLE_KEYS.map((k) => t(k));
   const [text, setText] = useState(settings.style_instructions);
   const [dirty, setDirty] = useState(false);
 
@@ -30,7 +33,7 @@ export function StylePane({ settings, onChange }: { settings: Settings; onChange
 
   return (
     <>
-      <PageHeader title="Style">
+      <PageHeader title={t("sidebar.nav.style")}>
         {settings.style_instructions.trim() !== "" && (
           <Button
             onClick={() => {
@@ -39,20 +42,20 @@ export function StylePane({ settings, onChange }: { settings: Settings; onChange
               setDirty(false);
             }}
           >
-            Clear
+            {t("common.clear")}
           </Button>
         )}
         <Button variant="primary" onClick={save} disabled={!dirty}>
-          {dirty ? "Save" : "Saved"}
+          {dirty ? t("common.save") : t("common.saved")}
         </Button>
       </PageHeader>
       <div className="pane-scroll">
         <div className="form">
-          <GroupTitle>How your text should read</GroupTitle>
+          <GroupTitle>{t("style.group.title")}</GroupTitle>
           <Group>
             <div className="row row-stack">
               <textarea
-                aria-label="Style instructions"
+                aria-label={t("style.textarea.ariaLabel")}
                 value={text}
                 onChange={(e) => {
                   setText(e.currentTarget.value);
@@ -64,16 +67,11 @@ export function StylePane({ settings, onChange }: { settings: Settings; onChange
                     save();
                   }
                 }}
-                placeholder={EXAMPLES.join("\n")}
+                placeholder={examples.join("\n")}
               />
             </div>
           </Group>
-          <Note>
-            Plain English, one instruction per line. Added to the cleanup prompt for every dictation.
-            If the instructions seem ignored, raise Cleanup strength to Medium in Settings. At Light the
-            model leaves text as spoken whenever it is unsure. Instructions that would add facts,
-            greetings or sign-offs you did not say are always refused.
-          </Note>
+          <Note>{t("style.note")}</Note>
         </div>
       </div>
     </>

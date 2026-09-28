@@ -2,15 +2,17 @@ import { useEffect, useState } from "react";
 import { Button, Empty, Group, GroupTitle, PageHeader, Row } from "./ui";
 import { Icon } from "./icons";
 import { addDictionaryEntry, getDictionary, removeDictionaryEntry, type DictEntry } from "./api";
+import { useT } from "../i18n";
 
 type Tab = "all" | "manual" | "auto";
-const TABS: { key: Tab; label: string }[] = [
-  { key: "all", label: "All" },
-  { key: "manual", label: "Added by you" },
-  { key: "auto", label: "Learned" },
+const TAB_KEYS: { key: Tab; labelKey: string }[] = [
+  { key: "all", labelKey: "common.all" },
+  { key: "manual", labelKey: "dictionary.tab.manual" },
+  { key: "auto", labelKey: "dictionary.tab.auto" },
 ];
 
 function AddForm({ onDone }: { onDone: () => void }) {
+  const t = useT();
   const [correct, setCorrect] = useState("");
   const [heard, setHeard] = useState("");
 
@@ -28,17 +30,17 @@ function AddForm({ onDone }: { onDone: () => void }) {
 
   return (
     <>
-      <GroupTitle>New word</GroupTitle>
+      <GroupTitle>{t("dictionary.addForm.title")}</GroupTitle>
       <Group>
-        <Row label="Word" hint="Spelled the way you want it typed.">
+        <Row label={t("dictionary.addForm.word.label")} hint={t("dictionary.addForm.word.hint")}>
           <input autoFocus value={correct} onChange={(e) => setCorrect(e.target.value)} placeholder="WhimprFlow" onKeyDown={onKey} style={{ width: 220 }} />
         </Row>
-        <Row label="Often heard as" hint="Optional. Separate variants with commas.">
+        <Row label={t("dictionary.addForm.heard.label")} hint={t("dictionary.addForm.heard.hint")}>
           <input value={heard} onChange={(e) => setHeard(e.target.value)} placeholder="whisper flow, wimper flow" onKeyDown={onKey} style={{ width: 220 }} />
         </Row>
         <Row label="">
-          <Button onClick={onDone}>Cancel</Button>
-          <Button variant="primary" onClick={() => void submit()} disabled={!correct.trim()}>Add word</Button>
+          <Button onClick={onDone}>{t("common.cancel")}</Button>
+          <Button variant="primary" onClick={() => void submit()} disabled={!correct.trim()}>{t("dictionary.addForm.addButton")}</Button>
         </Row>
       </Group>
     </>
@@ -46,6 +48,7 @@ function AddForm({ onDone }: { onDone: () => void }) {
 }
 
 export function DictionaryPane() {
+  const t = useT();
   const [entries, setEntries] = useState<DictEntry[]>([]);
   const [tab, setTab] = useState<Tab>("all");
   const [query, setQuery] = useState("");
@@ -69,11 +72,11 @@ export function DictionaryPane() {
 
   return (
     <>
-      <PageHeader title="Dictionary">
-        <input type="search" aria-label="Search words" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} />
+      <PageHeader title={t("sidebar.nav.dictionary")}>
+        <input type="search" aria-label={t("dictionary.search.ariaLabel")} placeholder={t("common.search")} value={query} onChange={(e) => setQuery(e.target.value)} />
         <Button variant="primary" onClick={() => setAdding((a) => !a)}>
           <Icon name="plus" size={13} strokeWidth={2.2} />
-          Add
+          {t("dictionary.addButton")}
         </Button>
       </PageHeader>
       <div className="pane-scroll">
@@ -89,9 +92,9 @@ export function DictionaryPane() {
 
           <GroupTitle>
             <div className="tabs" role="tablist" style={{ marginBottom: 4 }}>
-              {TABS.map((t) => (
-                <button key={t.key} role="tab" aria-selected={tab === t.key} onClick={() => setTab(t.key)}>
-                  {t.label}
+              {TAB_KEYS.map((tabDef) => (
+                <button key={tabDef.key} role="tab" aria-selected={tab === tabDef.key} onClick={() => setTab(tabDef.key)}>
+                  {t(tabDef.labelKey)}
                 </button>
               ))}
             </div>
@@ -100,11 +103,11 @@ export function DictionaryPane() {
           {filtered.length === 0 ? (
             <Group>
               <Empty
-                title={entries.length === 0 ? "No words yet" : "No matches"}
+                title={entries.length === 0 ? t("dictionary.empty.title.none") : t("common.noMatches")}
                 body={
                   entries.length === 0
-                    ? "Add names and jargon it keeps getting wrong. WhimprFlow also learns words you correct right after a paste."
-                    : `Nothing here matches “${query}”.`
+                    ? t("dictionary.empty.body.none")
+                    : t("dictionary.empty.body.noMatches", { query })
                 }
               />
             </Group>
@@ -114,11 +117,11 @@ export function DictionaryPane() {
                 <div className="row" key={e.correct}>
                   <div className="row-text">
                     <span className="dict-word">{e.correct}</span>
-                    {e.mishears.length > 0 && <span className="dict-heard">heard as {e.mishears.join(", ")}</span>}
-                    {e.auto && <span className="dict-auto">learned</span>}
+                    {e.mishears.length > 0 && <span className="dict-heard">{t("dictionary.row.heardAs", { mishears: e.mishears.join(", ") })}</span>}
+                    {e.auto && <span className="dict-auto">{t("dictionary.tag.learned")}</span>}
                   </div>
                   <div className="row-control dict-remove">
-                    <Button variant="plain" title="Remove" onClick={() => void remove(e.correct)}>
+                    <Button variant="plain" title={t("common.remove")} onClick={() => void remove(e.correct)}>
                       <Icon name="close" size={14} />
                     </Button>
                   </div>
@@ -127,7 +130,7 @@ export function DictionaryPane() {
             </Group>
           )}
           <div className="group-note">
-            Words here are corrected in every dictation before the text is typed.
+            {t("dictionary.note")}
           </div>
         </div>
       </div>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, Group, Status } from "./ui";
+import { useT } from "../i18n";
 import {
   fixAccessibility,
   requestAccessibility,
@@ -36,22 +37,24 @@ function Step({
   optional?: boolean;
   action: React.ReactNode;
 }) {
+  const t = useT();
   return (
     <div className={`row${locked ? " locked" : ""}`}>
       <div className={`step-num${done ? " done" : ""}`}>{done ? "✓" : n}</div>
       <div className="row-text">
         <div className="row-label">
           {title}
-          {optional && <span className="dict-auto">optional</span>}
+          {optional && <span className="dict-auto">{t("common.optional")}</span>}
         </div>
         <div className="row-hint">{detail}</div>
       </div>
-      <div className="row-control">{done ? <Status ok>Done</Status> : action}</div>
+      <div className="row-control">{done ? <Status ok>{t("common.done")}</Status> : action}</div>
     </div>
   );
 }
 
 function ModelStep({ n, locked }: { n: number; locked: boolean }) {
+  const t = useT();
   const [hasModel, setHasModel] = useState<boolean | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selected, setSelected] = useState("ggml-base.en.bin");
@@ -96,11 +99,11 @@ function ModelStep({ n, locked }: { n: number; locked: boolean }) {
     <div className={`row${locked ? " locked" : ""}`}>
       <div className={`step-num${done ? " done" : ""}`}>{done ? "✓" : n}</div>
       <div className="row-text">
-        <div className="row-label">Speech model</div>
+        <div className="row-label">{t("onboarding.model.title")}</div>
         <div className="row-hint">
           {downloading
-            ? `Downloading ${selected}, ${percent}%`
-            : error ?? "Choose a Whisper model for on-device transcription."}
+            ? t("onboarding.model.downloading", { model: selected, percent })
+            : error ?? t("onboarding.model.hint")}
         </div>
         {!done && !downloading && models.length > 0 && (
           <select
@@ -125,9 +128,9 @@ function ModelStep({ n, locked }: { n: number; locked: boolean }) {
       </div>
       <div className="row-control">
         {done && !downloading ? (
-          <Status ok>Installed</Status>
+          <Status ok>{t("common.installed")}</Status>
         ) : selectedInstalled && !downloading ? (
-          <Status ok>Installed</Status>
+          <Status ok>{t("common.installed")}</Status>
         ) : (
           <Button
             disabled={locked || downloading}
@@ -138,7 +141,7 @@ function ModelStep({ n, locked }: { n: number; locked: boolean }) {
               void downloadModel(selected);
             }}
           >
-            {downloading ? `${percent}%` : error ? "Retry" : "Download"}
+            {downloading ? `${percent}%` : error ? t("common.retry") : t("common.download")}
           </Button>
         )}
       </div>
@@ -147,6 +150,7 @@ function ModelStep({ n, locked }: { n: number; locked: boolean }) {
 }
 
 export function Onboarding({ status, refresh, onEnter }: { status: StatusT; refresh: () => void; onEnter: () => void }) {
+  const t = useT();
   // Backstop poll. The real signal is the heartbeat Rust pushes, since this
   // webview stops running timers when its window is hidden behind System
   // Settings, which is exactly where the reader is while granting.
@@ -172,64 +176,59 @@ export function Onboarding({ status, refresh, onEnter }: { status: StatusT; refr
   return (
     <div className="setup">
       <div className="setup-body">
-        <h1>Set up WhimprFlow</h1>
-        <p>
-          Two permissions and a model, in order. Accessibility applies the moment macOS grants it.
-          Microphone usually needs a relaunch, because macOS decides an app's microphone access
-          when it starts. Use Quit and Reopen after turning it on.
-        </p>
+        <h1>{t("onboarding.title")}</h1>
+        <p>{t("onboarding.description")}</p>
 
         {staleGrant && (
           <div className="banner" style={{ borderRadius: 8, marginBottom: 14 }}>
             <div className="banner-text">
-              <b>Accessibility is granted but the key is not wired up.</b>
-              <span>macOS is enforcing an older build's permission. Fix clears it and reopens the pane.</span>
+              <b>{t("onboarding.staleGrant.headline")}</b>
+              <span>{t("onboarding.staleGrant.detail")}</span>
             </div>
-            <Button variant="danger" onClick={() => void fixAccessibility()}>Fix</Button>
+            <Button variant="danger" onClick={() => void fixAccessibility()}>{t("common.fix")}</Button>
           </div>
         )}
 
         <Group>
           <Step
             n={1}
-            title="Accessibility"
-            detail="Reads the dictation key in every app and types your words."
+            title={t("common.accessibility")}
+            detail={t("permissions.accessibility.detail")}
             done={acc}
             locked={false}
-            action={<Button onClick={() => requestAccessibility()}>Grant</Button>}
+            action={<Button onClick={() => requestAccessibility()}>{t("common.grant")}</Button>}
           />
           <Step
             n={2}
-            title="Microphone"
-            detail={status.microphone_hint ?? "Hears what you say."}
+            title={t("common.microphone")}
+            detail={status.microphone_hint ?? t("common.microphoneHint")}
             done={mic}
             locked={!acc}
-            action={<Button disabled={!acc} onClick={() => requestMicrophone()}>Grant</Button>}
+            action={<Button disabled={!acc} onClick={() => requestMicrophone()}>{t("common.grant")}</Button>}
           />
           <ModelStep n={3} locked={false} />
           <Step
             n={4}
-            title="Input Monitoring"
-            detail="Makes key detection more reliable."
+            title={t("common.inputMonitoring")}
+            detail={t("onboarding.step.inputMonitoring.detail")}
             done={status.input_monitoring}
             locked={!(acc && mic)}
             optional
-            action={<Button disabled={!(acc && mic)} onClick={() => requestInputMonitoring()}>Grant</Button>}
+            action={<Button disabled={!(acc && mic)} onClick={() => requestInputMonitoring()}>{t("common.grant")}</Button>}
           />
         </Group>
 
         <div className="setup-actions">
-          <Button size="lg" onClick={() => void restartApp()}>Quit and Reopen</Button>
+          <Button size="lg" onClick={() => void restartApp()}>{t("onboarding.action.quitReopen")}</Button>
           {canEnter ? (
-            <Button size="lg" variant="primary" onClick={onEnter}>Start using WhimprFlow</Button>
+            <Button size="lg" variant="primary" onClick={onEnter}>{t("onboarding.action.start")}</Button>
           ) : (
-            <Button size="lg" onClick={onEnter}>Skip for now</Button>
+            <Button size="lg" onClick={onEnter}>{t("onboarding.action.skip")}</Button>
           )}
         </div>
 
         <p className="hint" style={{ marginTop: 16 }}>
-          If Accessibility stays off even though System Settings shows it on, click Grant again.
-          WhimprFlow clears the stale entry from older builds and asks again.
+          {t("onboarding.hint")}
         </p>
       </div>
     </div>

@@ -5,6 +5,7 @@ import { copyToClipboard, getHistory, pttLabel, type HistoryItem, type Settings 
 import { dayKey, dayLabel, fmtTimeOfDay } from "./format";
 import { useToast } from "./Toast";
 import { usePlatform } from "../platform";
+import { useT } from "../i18n";
 
 type Group = { key: string; label: string; items: HistoryItem[] };
 
@@ -27,6 +28,7 @@ function groupByDay(items: HistoryItem[]): Group[] {
 }
 
 export function History({ settings }: { settings: Settings }) {
+  const t = useT();
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [query, setQuery] = useState("");
   const toast = useToast();
@@ -49,25 +51,28 @@ export function History({ settings }: { settings: Settings }) {
   const key = pttLabel(platform)[settings.push_to_talk_key];
 
   async function copy(text: string) {
-    if (await copyToClipboard(text)) toast.success("Copied");
+    if (await copyToClipboard(text)) toast.success(t("history.toast.copied"));
   }
 
   return (
     <>
-      <PageHeader title="History">
+      <PageHeader title={t("sidebar.nav.history")}>
         <input
           type="search"
-          aria-label="Search history"
-          placeholder="Search"
+          aria-label={t("history.search.ariaLabel")}
+          placeholder={t("common.search")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
       </PageHeader>
       <div className="pane-scroll">
         {history.length === 0 ? (
-          <Empty title="Nothing dictated yet" body={<>Hold <Kbd>{key}</Kbd> in any app and speak. Your text lands at the cursor and a copy shows up here.</>} />
+          <Empty
+            title={t("history.empty.title")}
+            body={<>{t("history.empty.body.before")}<Kbd>{key}</Kbd>{t("history.empty.body.after")}</>}
+          />
         ) : filtered.length === 0 ? (
-          <Empty title="No matches" body={`Nothing in your history contains “${query}”.`} />
+          <Empty title={t("common.noMatches")} body={t("history.empty.noMatches.body", { query })} />
         ) : (
           <div className="history">
             {groups.map((g) => (
