@@ -52,7 +52,14 @@ nick@whimprflow:~$ fn (hold) → "schedule the meeting for thursday at three"
 
 ### macOS
 
-Grab the DMG from the [latest release](https://github.com/nitrimandylis/WhimprFlow/releases/latest). The app is unsigned, so on first launch: right-click > Open, or run `xattr -cr /Applications/WhimprFlow.app`.
+Grab the DMG from the [latest release](https://github.com/nitrimandylis/WhimprFlow/releases/latest). The app isn't notarized (no paid Apple Developer account behind this fork), so macOS still flags it as coming from an unidentified developer. As of this fix the build is ad-hoc signed, so Gatekeeper shows the normal "cannot verify" prompt instead of a bogus "app is damaged" error:
+
+1. Open the DMG and drag WhimprFlow into Applications.
+2. Double-click WhimprFlow.app. macOS will refuse to open it and show a dialog — that's expected.
+3. Go to System Settings → Privacy & Security, scroll down, and click **Open Anyway** next to the WhimprFlow message.
+4. Launch it again and click **Open Anyway** in the confirmation dialog.
+
+If you still see "WhimprFlow is damaged and can't be opened" instead of that flow (can happen if the DMG got re-quarantined by how it was transferred), clear the quarantine flag yourself: `xattr -cr /Applications/WhimprFlow.app`.
 
 Or build from source:
 

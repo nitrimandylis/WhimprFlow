@@ -96,6 +96,18 @@ which overrides most style requests — Medium is where it takes effect.
   `onlyBuiltDependencies` and the install fails outright without it.
 - Build scripts produce a `.dmg`, and a separate script builds a distributable
   package including the models.
+- **Fixed "WhimprFlow is damaged and can't be opened" on install.** The release
+  DMG was never code-signed at all, not even ad-hoc. On Apple Silicon, macOS
+  requires every executable to carry at least a signature to run once it's been
+  through the quarantine flow that browsers apply to downloads; with none present,
+  Gatekeeper refuses outright and never offers the usual "Open Anyway" escape
+  hatch under Privacy & Security, so it just reports the app as damaged.
+  `src-tauri/tauri.conf.json` now sets `bundle.macOS.signingIdentity` to `"-"`,
+  which makes `cargo tauri build` ad-hoc sign the `.app` during packaging. This
+  doesn't replace a real Developer ID and notarization (still not free), but it
+  restores the normal unsigned-app flow: macOS shows the standard "cannot verify
+  the developer" prompt, and Open Anyway in System Settings → Privacy & Security
+  works as expected.
 
 ## Tests
 
